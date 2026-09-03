@@ -1,4 +1,5 @@
 import { Text, useInput } from 'ink';
+import { useEffect, useRef } from 'react';
 import { theme } from '../theme.ts';
 
 export interface TextInputProps {
@@ -25,20 +26,41 @@ export function TextInput({
   placeholder = '',
   isActive = true,
 }: TextInputProps) {
+  /**
+   * The edit buffer is tracked in a ref as well as in the parent's state.
+   *
+   * Several keystrokes can arrive in one tick - fast typing, and every paste -
+   * and each handler would then read the same pre-render `value` prop, so all
+   * but the last character would be silently dropped and a Return arriving in
+   * the same tick would submit a stale string. The ref carries the edit forward
+   * within a tick; the effect resyncs it whenever the parent changes the value
+   * itself, such as clearing the line after a submit.
+   */
+  const buffer = useRef(value);
+  useEffect(() => {
+    buffer.current = value;
+  }, [value]);
+
   useInput(
     (input, key) => {
       if (key.return) {
-        onSubmit?.(value);
+        const submitted = buffer.current;
+        buffer.current = '';
+        onSubmit?.(submitted);
         return;
       }
       if (key.backspace || key.delete) {
-        onChange(value.slice(0, -1));
+        buffer.current = buffer.current.slice(0, -1);
+        onChange(buffer.current);
         return;
       }
       // Control sequences arrive as `input` too; only printable text is appended.
       if (key.ctrl || key.meta || key.escape || key.tab) return;
       if (key.upArrow || key.downArrow || key.leftArrow || key.rightArrow) return;
-      if (input) onChange(value + input);
+      if (input) {
+        buffer.current += input;
+        onChange(buffer.current);
+      }
     },
     { isActive },
   );
