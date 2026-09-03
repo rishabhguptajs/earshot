@@ -6,6 +6,9 @@ import { rm } from 'node:fs/promises';
  * Uses Bun.build directly - the bundler is the only thing we need from a build
  * tool, and this keeps the dev dependency surface at zero.
  */
+/** Everything published as a dependency of `earshot` rather than inlined. */
+const EXTERNAL = ['@ai-sdk/*', 'ai', 'zod'];
+
 const outdir = 'packages/cli/dist';
 await rm(outdir, { recursive: true, force: true });
 
@@ -15,8 +18,10 @@ const result = await Bun.build({
   target: 'node',
   format: 'esm',
   sourcemap: 'linked',
-  // Native and optional-at-runtime deps stay external; everything else inlines.
-  external: [],
+  // Provider SDKs stay external and are installed as real dependencies: bundling
+  // them inlines the AWS and Google SDKs and pushes the package past 10 MB, which
+  // is not something to hand someone running `npm i -g earshot`.
+  external: EXTERNAL,
 });
 
 if (!result.success) {

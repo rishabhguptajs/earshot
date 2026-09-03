@@ -12,7 +12,13 @@ Three things it aims to do that existing terminal agents don't do together:
 3. **It listens.** No scope creep, asks before guessing, remembers your preferences,
    and is steerable mid-task.
 
-> Status: pre-alpha. Not yet usable. See [the milestones](#milestones).
+> Status: pre-alpha. The provider layer works; the agent loop and TUI do not exist yet.
+
+```
+earshot models              # 896 models across 18 providers
+earshot models claude-opus  # filter
+earshot -p "explain this"   # one headless turn (no tools yet)
+```
 
 ## Install
 
@@ -22,8 +28,8 @@ npm i -g earshot
 
 ## Milestones
 
-- **M0 Scaffold** - monorepo, CI, `earshot --version`. *(in progress)*
-- **M1 Provider layer** - registry, catalog, auth, adapters, headless streaming chat.
+- **M0 Scaffold** - monorepo, CI, `earshot --version`. *(done)*
+- **M1 Provider layer** - registry, catalog, auth, adapters, headless streaming chat. *(done)*
 - **M2 Coding agent** - tools, permissions, sessions, Ink TUI.
 - **M3 Listening features** - scope contract, steering, compaction, memory.
 - **M4 Extensibility** - skills, commands, hooks, MCP, subagents.

@@ -1,5 +1,7 @@
 import { VERSION } from '@earshot/core';
 import { parseArgs } from './args.ts';
+import { headlessCommand } from './commands/headless.ts';
+import { modelsCommand } from './commands/models.ts';
 
 const HELP = `earshot ${VERSION} - a terminal coding agent that actually listens
 
@@ -20,22 +22,28 @@ Flags
 `;
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
-  const { command, flags } = parseArgs(argv);
+  const args = parseArgs(argv);
+  const { command, flags } = args;
 
   if (flags.version || flags.v) {
     process.stdout.write(`${VERSION}\n`);
     return 0;
   }
-  if (flags.help || flags.h || (!command && argv.length === 0 && !process.stdin.isTTY)) {
+  if (flags.help || flags.h) {
     process.stdout.write(HELP);
     return 0;
   }
 
+  const prompt = typeof flags.p === 'string' ? flags.p : undefined;
+  if (prompt) return headlessCommand(prompt, args);
+
+  if (command === 'models') return modelsCommand(args);
   if (command) {
     process.stderr.write(`earshot: "${command}" is not implemented yet\n`);
     return 1;
   }
 
+  // The interactive TUI lands in M2; until then the bare command explains itself.
   process.stdout.write(HELP);
   return 0;
 }

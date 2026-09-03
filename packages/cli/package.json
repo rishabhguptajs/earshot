@@ -8,10 +8,14 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@earshot/core": "workspace:*",
-    "@earshot/providers": "workspace:*",
-    "@earshot/tui": "workspace:*",
-    "@earshot/mcp": "workspace:*"
+    "@ai-sdk/amazon-bedrock": "^5.0.73",
+    "@ai-sdk/anthropic": "^4.0.49",
+    "@ai-sdk/azure": "^4.0.60",
+    "@ai-sdk/google": "^4.0.63",
+    "@ai-sdk/google-vertex": "^5.0.75",
+    "@ai-sdk/openai": "^4.0.57",
+    "@ai-sdk/openai-compatible": "^3.0.43",
+    "@ai-sdk/provider": "^4.0.10"
   },
   "description": "A terminal coding agent that actually listens.",
   "license": "MIT",
