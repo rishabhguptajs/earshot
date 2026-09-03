@@ -101,23 +101,29 @@ earshot is built in milestones. Honest state of each:
 |---|---|---|
 | **M0** Scaffold | Monorepo, CI on mac/linux/windows, build | ✅ Done |
 | **M1** Provider layer | Registry, catalog, auth, 7 wire adapters, headless turn | ✅ Done |
-| **M2** Coding agent | Tools, permissions, sessions, Ink TUI | ⬜ Next |
-| **M3** Listening | Scope contract, steering, compaction, memory | ⬜ Planned |
+| **M2** Coding agent | Tools, permissions, sessions, Ink TUI | ✅ Done |
+| **M3** Listening | Scope contract, compaction, memory | ⬜ Next |
 | **M4** Extensibility | Skills, commands, hooks, MCP, subagents | ⬜ Planned |
 | **M5** Ship | Docs site, npm, binaries, Windows QA | ⬜ Planned |
 
-**Works today:** listing and filtering 896 models with live pricing; credential
-resolution across CLI flag, env var, auth file and ambient cloud credentials; a
-single streaming headless turn against any of the 19 providers; cost accounting
-including prompt caching.
+**Works today:** the interactive TUI and `earshot -p`, both running the full
+agent loop with twelve tools; the permission system (five modes, `Tool(pattern)`
+rules, deny-first); sessions with `--resume` and `--continue`; `AGENTS.md`
+loading; undo snapshots; 896 models with live pricing; credential resolution
+across CLI flag, env var, auth file and ambient cloud credentials; cost
+accounting including prompt caching.
 
-**Does not exist yet:** tools, the agent loop, permissions, the TUI, sessions,
-memory, MCP, skills, hooks, subagents.
+**Does not exist yet:** auto-compaction, the memory system, MCP, skills, hooks,
+subagents, `/fork`, `/rewind` and `/undo` commands.
 
-**Not verified against live APIs.** The 73 tests run against scripted provider
-output. The bridge every adapter shares is well covered; individual vendors are
-not. If you have a key for a provider and hit a bug,
-[that's a very useful issue](https://github.com/rishabhguptajs/earshot/issues/new).
+**Windows needs Git Bash.** `bash` uses Git for Windows and fails with an install
+pointer if it is missing, rather than falling back to PowerShell. One shell
+dialect on every platform keeps commands and permission rules portable.
+
+**Not verified against live APIs.** The 185 tests run against scripted provider
+output — including the whole agent loop. The bridge every adapter shares is well
+covered; individual vendors are not. If you have a key for a provider and hit a
+bug, [that's a very useful issue](https://github.com/rishabhguptajs/earshot/issues/new).
 
 ## How it fits together
 
@@ -165,7 +171,10 @@ still cheap to change. The highest-leverage things:
 - **Try a provider you have a key for** and report what breaks. Nothing has been
   tested live.
 - **Add a provider** — [one line for most vendors](docs/adding-a-provider.md).
-- **M2 is open** — tools, permissions, the TUI. See the [roadmap](docs/roadmap.md).
+- **M3 is open** — context shapers, auto-compaction, the memory system. See the
+  [roadmap](docs/roadmap.md).
+- **Use it and tell us where it stopped listening** — scope creep, a prompt that
+  should not have appeared, a question it should have asked.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Be decent: [Code of Conduct](CODE_OF_CONDUCT.md).
 

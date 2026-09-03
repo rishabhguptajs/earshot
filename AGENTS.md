@@ -7,9 +7,11 @@ A terminal coding agent that actually listens. TypeScript, ESM, Node >= 22 and B
 - `packages/providers` - `Provider`/`WireApi` interfaces, registry, model catalog, auth store.
   Nothing here talks to the agent loop; everything above the wire speaks the unified
   types in `src/types.ts`.
-- `packages/core` - agent loop, tools, permissions, context shapers, sessions, memory.
+- `packages/core` - agent loop (`agent.ts`), tools (`tools/`), permissions
+  (`permissions/`), sessions (`session/`), undo (`undo/`), context (`context/`).
 - `packages/mcp` - MCP client manager.
-- `packages/tui` - Ink app.
+- `packages/tui` - Ink app. Completed turns go into `Static`; only the live region
+  re-renders.
 - `packages/cli` - the `earshot` binary; the only publishable package.
 
 ## Commands
@@ -17,6 +19,25 @@ A terminal coding agent that actually listens. TypeScript, ESM, Node >= 22 and B
 - `bun test` - test suite
 - `bun run typecheck` - `tsc -b` across the project references
 - `bun run lint` / `bun run format` - biome
+
+## Rules that are not style preferences
+
+- **A mutating tool must declare `permission()`.** `defineTool` throws otherwise.
+  The gate never sees the tool, only its `PermissionRequest`, so a tool that
+  forgets to describe itself would silently skip approval.
+- **Deny beats everything.** No permission mode and no allow rule overrides a
+  deny rule, at any scope. If a change makes that untrue, the change is wrong.
+- **A permission prompt shows the real command or the real diff.** Never a
+  summary - that is the thing that trains people to approve without reading.
+- **History is append-only.** Anthropic rejects edited thinking blocks. Rewind
+  and compaction append entries; they never rewrite.
+- **Every tool call gets a result part**, including interrupted ones, or the next
+  request fails.
+- **No DA1/DCS terminal queries anywhere in the TUI.** ConPTY swallows them and
+  the process hangs for 60s on Windows. Feature-flag any capability detection off
+  on Windows.
+- **`bash` is Git Bash on Windows, never PowerShell.** One shell dialect keeps
+  commands and permission rules portable.
 
 ## Conventions
 

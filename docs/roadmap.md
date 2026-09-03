@@ -26,24 +26,39 @@ which drops tool calls when streaming.
 **Caveat:** no provider has been verified against a live API. Tests run against
 scripted provider output.
 
-## M2 — Coding agent ⬜ *next*
+## M2 — Coding agent ✅
 
 The milestone that makes earshot usable.
 
-- Agent loop: assemble → stream → tool calls → permission gate → execute → repeat
+- Agent loop: assemble → stream → tool calls → permission gate → execute → repeat.
+  `runTurn()` is an async generator, interruptible via `AbortSignal`; read-only
+  calls run concurrently, mutating ones serialised in emission order
+- Steering: a message typed mid-turn is injected at the next model call rather
+  than cancelling the turn
 - Tools: `read`, `write`, `edit`, `multi_edit`, `ls`, `glob`, `grep`, `bash`,
-  `web_fetch`, `ask_user`, `todo`
+  `bash_output`, `web_fetch`, `ask_user`, `todo`
 - Permissions: modes `plan | ask | accept-edits | auto | yolo`; `Tool(pattern)`
-  rules; deny-first, never overridable by allow; writes outside cwd always ask
-- Sessions: tree-structured JSONL, `--resume`, `--continue`
-- `AGENTS.md` loading (and `CLAUDE.md`)
-- Ink TUI with inline scrollback, permission and question prompts, diff view
-- Undo snapshots via a shadow git object store
-- Windows shell path
+  rules at global, project and local scope; deny-first and never overridable by
+  allow; writes outside cwd always ask; command rules match every segment of a
+  chained command, not just its prefix
+- Sessions: tree-structured JSONL under the data dir, `--resume`, `--continue`
+- `AGENTS.md` loading (and `CLAUDE.md`), nearest-wins by ordering
+- Ink TUI: inline scrollback via `Static`, permission and question prompts, diff
+  view, collapsible tool blocks, status line
+- Undo: per-tool-batch snapshots in a shadow git object store, outside the user's
+  repository
 
-**Open question:** whether v1 requires Git Bash on Windows rather than supporting
-PowerShell as a second shell dialect. Supporting both doubles the surface area of
-the tool the agent uses most.
+**Decision taken:** Windows requires Git Bash. `bash` resolves Git for Windows
+and fails with an install pointer when it is absent, rather than falling back to
+PowerShell. Two shell dialects would mean quoting, pipelines and permission-rule
+matching all differ by machine for the tool the agent uses most.
+
+**Not done in M2:** context shapers and auto-compaction (M3), `/fork` and
+`/rewind` commands — the transcript format supports them but no UI drives them
+yet — and a `/undo` command, though the snapshots it needs are being written.
+
+**Caveat:** still not verified against a live API. Tests run the whole loop
+against a scripted provider.
 
 ## M3 — Listening + context ⬜
 

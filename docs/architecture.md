@@ -11,9 +11,9 @@ and bundled into it at build time.
 | Package | Responsibility |
 |---|---|
 | `packages/providers` | `Provider`/`WireApi` interfaces, registry, model catalog, auth store, wire adapters |
-| `packages/core` | Agent loop, tools, permissions, context shapers, sessions, memory *(partly planned)* |
+| `packages/core` | Agent loop, tools, permissions, sessions, undo; context shapers *(planned)* |
 | `packages/mcp` | MCP client manager *(planned)* |
-| `packages/tui` | Ink app, inline scrollback *(planned)* |
+| `packages/tui` | Ink app, inline scrollback |
 | `packages/cli` | The `earshot` binary; the only publishable package |
 
 Dependencies point one way: `cli → tui → core → providers`. Nothing in
@@ -120,7 +120,7 @@ and text-output chat models only.
 refresh, and user overrides from config. A model the registry has never heard of
 is a config entry, not a release.
 
-## Agent loop *(planned — M2)*
+## Agent loop
 
 Single-threaded, flat, append-only message list — the same shape Claude Code uses,
 and what Anthropic's preserved-thinking requires:
@@ -130,16 +130,101 @@ assemble context → stream model → collect tool calls → permission gate
   → execute (read-only in parallel, mutating serialised) → append results → repeat
 ```
 
-Interruptible via `AbortSignal`. Messages typed mid-turn are queued and injected
-at the next model call, which is how steering works without cancelling the turn.
+`runTurn()` in [`agent.ts`](../packages/core/src/agent.ts) is an async generator
+yielding events, so the TUI and the headless renderer are two consumers of one
+loop rather than two loops.
 
-## Sessions *(planned — M2)*
+Three properties the implementation holds to:
+
+- **Every tool call gets a result part**, including calls interrupted before they
+  ran and calls naming a tool that does not exist. A provider rejects the next
+  request when an assistant tool call has no matching result, so "interrupted"
+  has to be a result rather than a gap.
+- **Results are ordered by emission, not completion.** Read-only calls run
+  concurrently, but a replayed transcript is deterministic.
+- **A failing tool is data, not a crash.** Bad input, a denied permission, a
+  non-zero exit — all come back as error results the model reads and reacts to.
+  Only the model call itself failing ends a turn early.
+
+Interruptible via `AbortSignal`. Messages typed mid-turn are queued and injected
+between one model call and the next — never mid-batch, which would contradict a
+tool call the model is still awaiting a result for.
+
+## Tools
+
+Twelve, in [`packages/core/src/tools`](../packages/core/src/tools). Two rules
+shape the rest:
+
+`defineTool` refuses to construct a mutating tool with no `permission()`. The
+gate sees only a tool's `PermissionRequest`, so without this a new tool could
+skip the gate by forgetting to describe itself — silently, and looking like it
+worked.
+
+`edit` refuses a `find` string matching more than once rather than taking the
+first occurrence, and requires the file to have been read this session. The model
+cannot see which occurrence it hit; picking one is how an edit lands in the wrong
+function.
+
+`bash` uses Git Bash on Windows and fails with an install pointer when it is
+absent. See [the roadmap](roadmap.md#m2--coding-agent-) for why not PowerShell.
+
+## Permissions
+
+Modes `plan | ask | accept-edits | auto | yolo`, over `Tool(pattern)` rules
+loaded from global, project and local settings. `decide()` is pure — rules and a
+request in, a decision out — so the policy is tested without a terminal.
+
+Order is the policy, and it is deliberately not "most specific wins":
+
+1. A matching **deny** rule refuses. No mode and no allow rule overrides it.
+2. Read-only tools never prompt.
+3. `plan` refuses every mutating tool.
+4. A **write outside cwd** prompts whatever the rules say, in every mode but yolo.
+5. `yolo` allows.
+6. A matching **ask** rule prompts even where an allow rule would match.
+7. A matching **allow** rule allows.
+8. Otherwise the mode decides.
+
+Rules from the three scopes are concatenated rather than shadowing one another: a
+scoped override would let a project's checked-in settings remove a deny rule the
+user set globally.
+
+Command patterns match **every segment** of a chained command. Without that,
+`Bash(npm run *)` would allow `npm run build && rm -rf ~`.
+
+## Undo
+
+Per-tool-batch snapshots in a git object database under the data dir, with
+`GIT_DIR` pointed away from the project. The user's repository is never touched —
+no commits, no stash, no index changes. An agent that commits to manage its own
+undo has silently rewritten the user's history.
+
+Per batch rather than per call, so undo restores a coherent unit. git being
+absent disables undo rather than failing.
+
+## TUI
+
+Completed turns go into Ink's `Static`; only the live region re-renders. That is
+what makes the scrollback real — the user's terminal owns scrolling and
+selection, and a long session does not repaint thousands of rows per token.
+
+Two Windows constraints are held by construction: nothing writes a DA1 or DCS
+terminal query (ConPTY neither answers nor rejects them, so a probe reads as a
+60-second hang at startup), and the frame rate is capped at 30 there.
+
+## Sessions
 
 JSONL under `~/.local/share/earshot/sessions/<cwd-hash>/<id>.jsonl`, tree
 structured (`id`, `parentId`) so `/fork`, `/rewind`, `--resume` and `--continue`
 are all navigation over one file. Append-only: compaction and rewind add entries
 rather than rewriting history. Permissions are deliberately **not** restored on
 resume.
+
+Two details that are easy to get wrong and were: an append reads its parent
+inside the write queue, not at call time — reading it eagerly makes concurrent
+appends siblings of one entry rather than a chain — and session ids carry a
+time-ordered prefix, because UUIDs do not sort by creation and mtimes tie within
+a millisecond, which left `--continue` picking arbitrarily.
 
 ## Context shapers *(planned — M3)*
 
