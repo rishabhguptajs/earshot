@@ -6,7 +6,21 @@
  * opaquely in `providerMetadata` and is persisted verbatim in the transcript.
  */
 
-export type ProviderMetadata = Record<string, Record<string, unknown>>;
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue | undefined };
+
+/**
+ * Namespaced by provider id. JSON-valued by construction: this is written to and
+ * read back from the session JSONL verbatim, so anything unserialisable here would
+ * silently break replay. Values may be `undefined` - providers do emit sparse
+ * objects, and JSON.stringify drops those keys, which is the behaviour we want.
+ */
+export type ProviderMetadata = Record<string, Record<string, JsonValue | undefined>>;
 
 // ---------------------------------------------------------------------------
 // Messages
