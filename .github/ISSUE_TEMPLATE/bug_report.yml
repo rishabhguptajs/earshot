@@ -1,0 +1,54 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        earshot is pre-alpha and no provider has been verified against a live API,
+        so provider bugs are expected and genuinely useful to receive.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The exact command, and the full error output.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model
+      placeholder: anthropic/claude-opus-5
+    validations:
+      required: false
+
+  - type: dropdown
+    id: live
+    attributes:
+      label: Was this against a live API?
+      options:
+        - "Yes, with a real API key"
+        - "No, it failed before any request"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: "Output of: node -v, bun -v, and your OS and terminal."
+      render: shell
+    validations:
+      required: true

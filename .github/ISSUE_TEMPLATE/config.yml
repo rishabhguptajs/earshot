@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/rishabhguptajs/earshot/security/advisories/new
+    about: Report privately, not as a public issue.
+  - name: Roadmap
+    url: https://github.com/rishabhguptajs/earshot/blob/main/docs/roadmap.md
+    about: Check whether it is already planned before requesting a feature.

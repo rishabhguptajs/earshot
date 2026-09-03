@@ -1,0 +1,106 @@
+# CLI reference
+
+> Commands marked **planned** are in the help text but not implemented. Running
+> one prints `not implemented yet` and exits 1.
+
+## Synopsis
+
+```
+earshot [flags]                   start the interactive TUI      (planned)
+earshot -p "<prompt>" [flags]     one headless turn
+earshot models [filter] [flags]   list the model catalog
+earshot auth <login|list>         manage credentials             (planned)
+earshot mcp <list|add>            manage MCP servers             (planned)
+earshot config <get|set>          read and write config          (planned)
+earshot acp                       run as an ACP server           (planned)
+earshot doctor                    diagnose the local setup       (planned)
+```
+
+## Global flags
+
+| Flag | Description |
+|---|---|
+| `--version`, `-v` | Print the version and exit |
+| `--help`, `-h` | Print help and exit |
+| `--model <ref>` | Model for this run, as `provider/model` or a bare model id |
+
+## `earshot -p`
+
+Runs a single non-interactive turn and prints the response.
+
+```bash
+earshot -p "explain the provider registry"
+earshot -p "hello" --model openrouter/anthropic/claude-opus-5
+earshot -p "hello" --output-format json
+```
+
+| Flag | Values | Default |
+|---|---|---|
+| `--model <ref>` | any `earshot models` reference | `anthropic/claude-opus-5` |
+| `--output-format <fmt>` | `text`, `json`, `stream-json` | `text` |
+
+**Output formats**
+
+- `text` — response text streamed to stdout as it arrives
+- `json` — one object at the end: `text`, `model`, `usage`, `costUsd`
+- `stream-json` — newline-delimited events as they arrive, for piping
+
+`Ctrl-C` aborts the request; partial output is kept.
+
+> **No tools.** `-p` currently makes one model call. It cannot read or edit
+> files. The tool-calling loop arrives in M2.
+
+## `earshot models`
+
+Lists the model catalog with context windows, pricing and capabilities.
+
+```bash
+earshot models              # everything
+earshot models opus         # filter by id, provider or name
+earshot models --json       # machine-readable
+earshot models --refresh    # fetch live from models.dev first
+```
+
+| Flag | Description |
+|---|---|
+| `--json` | Emit the full `Model` objects instead of a table |
+| `--refresh` | Fetch a fresh catalog from models.dev rather than the snapshot |
+
+Output columns: model reference, context window, price (USD per million tokens,
+input/output), and capability tags (`reasoning`, `vision`, `no-tools`).
+
+Filtering is a case-insensitive substring match against the model id, the
+provider id and the display name.
+
+## Model references
+
+`provider/model` is unambiguous and always works:
+
+```bash
+--model anthropic/claude-opus-5
+--model openrouter/anthropic/claude-opus-5
+```
+
+A bare model id resolves against the first provider offering it, in registration
+order — convenient, but pin the provider in scripts, since the same model is often
+served by several.
+
+## Exit codes
+
+Meaningful, so CI can branch on them:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Request failed — provider error, network, aborted |
+| `2` | Unknown model reference |
+| `3` | No credentials for the provider |
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `EARSHOT_CONFIG_DIR` | Override the config directory (default `~/.config/earshot`, `%APPDATA%\earshot` on Windows) |
+| `EARSHOT_DATA_DIR` | Override the data directory (sessions) |
+| `OLLAMA_HOST` | Ollama base URL (default `http://127.0.0.1:11434`) |
+| *provider keys* | See [Providers](providers.md) |

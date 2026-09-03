@@ -1,0 +1,49 @@
+name: Provider request
+description: Ask for a model provider that is not supported yet
+labels: [provider]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most providers are OpenAI-compatible and take a one-line change — see
+        [Adding a provider](../../docs/adding-a-provider.md). PRs very welcome.
+
+        Note that subscription workarounds (Claude Pro/Max OAuth, Gemini Code
+        Assist OAuth) will not be added, for reasons documented in
+        [Providers](../../docs/providers.md#deliberately-not-supported).
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider
+      placeholder: Cohere
+    validations:
+      required: true
+
+  - type: input
+    id: base-url
+    attributes:
+      label: API base URL
+      placeholder: https://api.cohere.ai/compatibility/v1
+    validations:
+      required: false
+
+  - type: dropdown
+    id: compatible
+    attributes:
+      label: Is it OpenAI-compatible?
+      description: Does POST {baseUrl}/chat/completions accept OpenAI's request shape?
+      options:
+        - "Yes"
+        - "No, it has its own API"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: models-dev
+    attributes:
+      label: models.dev id, if listed
+      placeholder: cohere
+    validations:
+      required: false

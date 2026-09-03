@@ -39,7 +39,7 @@ export async function resolveModel(
   ref: string,
   opts: { apiKey?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<ResolvedModel> {
-  const found = registry.resolveModel(ref);
+  const found = registry.resolveModel(ref) ?? (await discoverModel(registry, ref));
   if (!found) throw new UnknownModelError(ref);
 
   const credentials = await resolveCredentials(found.provider, {
@@ -49,6 +49,40 @@ export async function resolveModel(
   if (!credentials) throw new MissingCredentialsError(found.provider);
 
   return { ...found, credentials };
+}
+
+/**
+ * Providers with live model discovery (Ollama, and any local runtime) publish no
+ * static catalog, so a reference to one never matches until we ask the server what
+ * it has. Only providers that opt in with `fetchModels` are probed, and a probe
+ * that fails is treated as "no such model" rather than an error - the server
+ * simply may not be running.
+ */
+async function discoverModel(
+  registry: ProviderRegistry,
+  ref: string,
+): Promise<{ provider: Provider; model: Model } | undefined> {
+  const slash = ref.indexOf('/');
+  const candidates = registry
+    .list()
+    .filter((p) => p.fetchModels)
+    .filter((p) => (slash > 0 ? p.id === ref.slice(0, slash) : true));
+
+  const wanted = slash > 0 ? ref.slice(slash + 1) : ref;
+
+  for (const provider of candidates) {
+    try {
+      const models = await provider.fetchModels?.({
+        credentials: { type: 'ambient' },
+        ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+      });
+      const model = models?.find((m) => m.id === wanted);
+      if (model) return { provider, model };
+    } catch {
+      // The runtime is not reachable; fall through to "unknown model".
+    }
+  }
+  return undefined;
 }
 
 function describeMissingAuth(provider: Provider): string {
