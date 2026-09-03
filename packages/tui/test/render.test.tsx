@@ -135,7 +135,24 @@ function sessionFor(turns: Turn[], cwd: string, mode: 'auto' | 'ask' = 'auto'): 
 }
 
 /** Lets the app mount, run its effects and settle. */
-const settle = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
+const settle = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Waits for text to appear on screen.
+ *
+ * Polling rather than a fixed sleep: a sleep long enough to be reliable on a
+ * loaded CI runner is far longer than these need locally, and one short enough
+ * to be pleasant locally fails intermittently there. This waits only as long as
+ * it has to and fails with what was actually rendered.
+ */
+async function waitFor(stdout: FakeStdout, text: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (stdout.output.includes(text)) return;
+    await settle(10);
+  }
+  throw new Error(`timed out waiting for ${JSON.stringify(text)}. Rendered:\n${stdout.output}`);
+}
 
 /**
  * Types text and then presses Return, with a tick between.
@@ -155,9 +172,15 @@ async function type(stdin: FakeStdin, text: string): Promise<void> {
 async function withApp(
   turns: Turn[],
   fn: (io: { stdout: FakeStdout; stdin: FakeStdin; cwd: string }) => Promise<void>,
-  options: { mode?: 'auto' | 'ask'; initialPrompt?: string } = {},
+  options: {
+    mode?: 'auto' | 'ask';
+    initialPrompt?: string;
+    /** Runs before the app mounts, so a turn cannot race the fixture. */
+    setup?: (cwd: string) => Promise<void>;
+  } = {},
 ): Promise<void> {
   const cwd = await mkdtemp(join(tmpdir(), 'earshot-tui-'));
+  await options.setup?.(cwd);
   const stdout = new FakeStdout();
   const stdin = new FakeStdin();
   const session = sessionFor(turns, cwd, options.mode ?? 'auto');
@@ -188,7 +211,7 @@ async function withApp(
 describe('the app renders', () => {
   test('mounts and shows the status line', async () => {
     await withApp([{ text: 'hi' }], async ({ stdout }) => {
-      expect(stdout.output).toContain('test/scripted');
+      await waitFor(stdout, 'test/scripted');
       expect(stdout.output).toContain('auto');
     });
   });
@@ -197,8 +220,7 @@ describe('the app renders', () => {
     await withApp(
       [{ text: 'the answer is 41' }],
       async ({ stdout }) => {
-        await settle(120);
-        expect(stdout.output).toContain('the answer is 41');
+        await waitFor(stdout, 'the answer is 41');
       },
       { initialPrompt: 'what is the answer?' },
     );
@@ -208,9 +230,8 @@ describe('the app renders', () => {
     await withApp(
       [{ calls: [{ name: 'ls', input: {} }] }, { text: 'listed' }],
       async ({ stdout }) => {
-        await settle(200);
+        await waitFor(stdout, 'listed');
         expect(stdout.output).toContain('ls');
-        expect(stdout.output).toContain('listed');
       },
       { initialPrompt: 'list the directory' },
     );
@@ -219,16 +240,14 @@ describe('the app renders', () => {
   test('typed input reaches the screen', async () => {
     await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
       stdin.send('hello');
-      await settle();
-      expect(stdout.output).toContain('hello');
+      await waitFor(stdout, 'hello');
     });
   });
 
   test('an unknown slash command is reported rather than sent to the model', async () => {
     await withApp([{ text: 'should not be reached' }], async ({ stdout, stdin }) => {
       await type(stdin, '/nonsense');
-      await settle(120);
-      expect(stdout.output).toContain('unknown command');
+      await waitFor(stdout, 'unknown command');
       expect(stdout.output).not.toContain('should not be reached');
     });
   });
@@ -236,8 +255,7 @@ describe('the app renders', () => {
   test('/mode switches the permission mode and says so', async () => {
     await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
       await type(stdin, '/mode plan');
-      await settle(120);
-      expect(stdout.output).toContain('permission mode: plan');
+      await waitFor(stdout, 'permission mode: plan');
     });
   });
 });
@@ -249,14 +267,17 @@ describe('the permission prompt', () => {
         { calls: [{ name: 'write', input: { path: 'a.txt', content: 'new\n' } }] },
         { text: 'done' },
       ],
-      async ({ stdout, cwd }) => {
-        await writeFile(join(cwd, 'a.txt'), 'old\n');
-        await settle(250);
-        expect(stdout.output).toContain('Allow once');
+      async ({ stdout }) => {
+        await waitFor(stdout, 'Allow once');
         // The actual change, not a description of it.
+        expect(stdout.output).toContain('-old');
         expect(stdout.output).toContain('+new');
       },
-      { mode: 'ask', initialPrompt: 'change a.txt' },
+      {
+        mode: 'ask',
+        initialPrompt: 'change a.txt',
+        setup: (cwd) => writeFile(join(cwd, 'a.txt'), 'old\n'),
+      },
     );
   });
 
@@ -267,11 +288,9 @@ describe('the permission prompt', () => {
         { text: 'finished' },
       ],
       async ({ stdout, stdin }) => {
-        await settle(200);
-        expect(stdout.output).toContain('Allow once');
+        await waitFor(stdout, 'Allow once');
         stdin.send('\r');
-        await settle(250);
-        expect(stdout.output).toContain('finished');
+        await waitFor(stdout, 'finished');
       },
       { mode: 'ask', initialPrompt: 'write b.txt' },
     );
@@ -286,11 +305,9 @@ describe('ask_user', () => {
         { text: 'using SQLite' },
       ],
       async ({ stdout, stdin }) => {
-        await settle(200);
-        expect(stdout.output).toContain('Postgres or SQLite?');
+        await waitFor(stdout, 'Postgres or SQLite?');
         await type(stdin, 'SQLite');
-        await settle(250);
-        expect(stdout.output).toContain('using SQLite');
+        await waitFor(stdout, 'using SQLite');
       },
       { initialPrompt: 'pick a database' },
     );
