@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.earshot/settings.local.json
+.DS_Store
