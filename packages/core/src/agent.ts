@@ -26,6 +26,7 @@ import {
   ToolInputError,
   type ToolResult,
 } from './tools/types.ts';
+import type { ShadowGit, SnapshotFile } from './undo/shadow-git.ts';
 
 /** Everything the TUI and the headless renderer need to show a turn. */
 export type AgentEvent =
@@ -57,6 +58,8 @@ export interface AgentOptions {
   env?: NodeJS.ProcessEnv;
   /** Called with every message appended to history, for session persistence. */
   onMessage?: (message: Message) => void | Promise<void>;
+  /** Snapshot store for undo. Absent means this session keeps no undo history. */
+  shadow?: ShadowGit;
 }
 
 const DEFAULT_MAX_STEPS = 100;
@@ -82,6 +85,8 @@ export class Agent {
   private rules: Rule[];
   private mode: PermissionMode;
   private totalCostUsd = 0;
+  /** Pre-change hashes for the batch currently executing. */
+  private batchSnapshot: SnapshotFile[] = [];
 
   constructor(private readonly options: AgentOptions) {
     this.tools = new ToolRegistry(options.tools ?? (BUILTIN_TOOLS as Tool<never>[]));
@@ -198,7 +203,9 @@ export class Agent {
       }
 
       const results: ToolResultPart[] = [];
+      this.batchSnapshot = [];
       for await (const event of this.runCalls(calls, results, signal)) yield event;
+      await this.commitSnapshot(calls);
 
       // Results are appended in the order the model emitted the calls, not the
       // order they finished, so a replayed transcript is deterministic even
@@ -323,6 +330,10 @@ export class Agent {
       }
     }
 
+    // Hashed here, immediately before the change and after approval, so the
+    // recorded contents are what was on disk when the tool ran.
+    await this.captureWrites(request?.writes ?? []);
+
     try {
       const result = await tool.execute(input, ctx);
       return {
@@ -341,6 +352,29 @@ export class Agent {
           : `${call.toolName} failed: ${(error as Error).message}`;
       return errorPart(call, message);
     }
+  }
+
+  /** Records pre-change contents for paths not already captured in this batch. */
+  private async captureWrites(paths: string[]): Promise<void> {
+    const shadow = this.options.shadow;
+    if (!shadow) return;
+    for (const path of paths) {
+      if (this.batchSnapshot.some((file) => file.path === path)) continue;
+      this.batchSnapshot.push({ path, before: await shadow.hashFile(path) });
+    }
+  }
+
+  /**
+   * Writes one snapshot record per tool batch. Per-batch rather than per-call so
+   * undo restores a coherent unit: a `multi_edit` across three files, or an edit
+   * plus the command that formatted it, is one step back rather than three.
+   */
+  private async commitSnapshot(calls: ToolCallPart[]): Promise<void> {
+    const shadow = this.options.shadow;
+    if (!shadow || this.batchSnapshot.length === 0) return;
+    const label = calls.map((call) => call.toolName).join(', ');
+    await shadow.record(this.batchSnapshot, label).catch(() => undefined);
+    this.batchSnapshot = [];
   }
 
   private context(signal: AbortSignal): ToolContext {
