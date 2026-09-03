@@ -21,9 +21,11 @@ before public disclosure.
 earshot handles API credentials and executes commands on your machine, so the
 sensitive areas are:
 
-- **Credential handling.** The auth store (`~/.config/earshot/auth.json`) is mode
-  `0600` and written atomically. Credential leakage into logs, transcripts, error
-  messages or subprocess environments is a vulnerability.
+- **Credential handling.** The auth store (`~/.config/earshot/auth.json`) is
+  written atomically and, on POSIX systems, with mode `0600`. Windows has no
+  POSIX mode bits; there the file relies on the ACLs of the user profile
+  directory. Credential leakage into logs, transcripts, error messages or
+  subprocess environments is a vulnerability.
 - **Command execution.** The agent runs shell commands. Any path around the
   permission system — a rule that fails to deny, an escape from the working
   directory, an injection through tool input — is a vulnerability.
@@ -48,8 +50,8 @@ sensitive areas are:
 Recommendations for users:
 
 - Prefer environment variables or ambient cloud credentials over storing keys.
-- The auth file is `0600`; it is not encrypted. Anyone with your user account can
-  read it.
+- The auth file is not encrypted, and is `0600` on POSIX only. Anyone with access
+  to your user account can read it.
 - Session transcripts are plain JSONL under the data directory and may contain
   sensitive code. Treat them as you would the repository itself.
 - earshot has **zero telemetry**. Nothing is sent anywhere except to the model

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { mkdtemp, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AuthStore, resolveCredentials } from '../src/auth.ts';
 import type { Provider } from '../src/types.ts';
@@ -19,13 +19,21 @@ async function tempStore() {
 }
 
 describe('AuthStore', () => {
-  test('round-trips credentials and writes the file 0600', async () => {
+  test('round-trips credentials and persists them across instances', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'earshot-auth-'));
     const path = join(dir, 'auth.json');
     const store = new AuthStore(path);
     await store.set('anthropic', { type: 'api-key', apiKey: 'sk-test' });
     expect((await store.get('anthropic'))?.apiKey).toBe('sk-test');
     expect((await new AuthStore(path).get('anthropic'))?.apiKey).toBe('sk-test');
+  });
+
+  // Windows has no POSIX mode bits - file security there comes from the ACLs on
+  // the user profile directory instead, so there is nothing to assert.
+  test.skipIf(platform() === 'win32')('the auth file is not readable by other users', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'earshot-auth-'));
+    const path = join(dir, 'auth.json');
+    await new AuthStore(path).set('anthropic', { type: 'api-key', apiKey: 'sk-test' });
     expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
 

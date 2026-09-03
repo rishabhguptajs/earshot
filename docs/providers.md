@@ -39,7 +39,7 @@ First match wins:
 
 1. **CLI flag** — `--api-key`
 2. **Environment variable** — the ones in the table above
-3. **Auth file** — `~/.config/earshot/auth.json`, mode `0600`, written atomically
+3. **Auth file** — `~/.config/earshot/auth.json`, written atomically, mode `0600` on POSIX
 4. **Ambient credentials** — the AWS credential chain for Bedrock, Google
    Application Default Credentials for Vertex
 

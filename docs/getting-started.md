@@ -44,7 +44,7 @@ earshot resolves credentials in a fixed order, first match wins:
 
 1. A CLI flag (`--api-key`)
 2. The provider's environment variable
-3. `~/.config/earshot/auth.json` (mode `0600`)
+3. `~/.config/earshot/auth.json` (mode `0600` on POSIX)
 4. Provider-native ambient credentials — the AWS credential chain, Google ADC
 
 For most providers, setting one environment variable is all you need:
