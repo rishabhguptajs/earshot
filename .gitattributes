@@ -1,0 +1,10 @@
+# Check out LF everywhere, including Windows. Without this, Git's autocrlf turns
+# every file into CRLF on a Windows checkout and the formatter fails CI.
+* text=auto eol=lf
+
+# Binary and generated files Git should not touch or diff.
+*.png binary
+*.jpg binary
+*.ico binary
+bun.lock -diff linguist-generated
+packages/providers/src/catalog/snapshot.json -diff linguist-generated

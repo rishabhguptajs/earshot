@@ -26,6 +26,12 @@
         "@ai-sdk/openai-compatible": "^3.0.43",
         "@ai-sdk/provider": "^4.0.10",
       },
+      "devDependencies": {
+        "@earshot/core": "workspace:*",
+        "@earshot/mcp": "workspace:*",
+        "@earshot/providers": "workspace:*",
+        "@earshot/tui": "workspace:*",
+      },
     },
     "packages/core": {
       "name": "@earshot/core",

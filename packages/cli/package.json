@@ -25,5 +25,11 @@
   "files": [
     "dist",
     "bin"
-  ]
+  ],
+  "devDependencies": {
+    "@earshot/core": "workspace:*",
+    "@earshot/providers": "workspace:*",
+    "@earshot/tui": "workspace:*",
+    "@earshot/mcp": "workspace:*"
+  }
 }
