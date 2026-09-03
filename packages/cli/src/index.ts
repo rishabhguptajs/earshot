@@ -17,6 +17,9 @@ Flags
   --model <provider/model>     model for this session
   --permission-mode <mode>     plan | ask | accept-edits | auto | yolo
   --output-format <fmt>        text | json | stream-json  (with -p)
+  --continue                   resume the most recent session here
+  --resume [<path>]            resume a specific session transcript
+  --api-key <key>              credentials for this run only
   --version, -v                print the version
   --help, -h                   print this help
 `;
