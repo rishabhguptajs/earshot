@@ -8,6 +8,11 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@earshot/core": "workspace:*"
+    "@earshot/core": "workspace:*",
+    "ink": "^6",
+    "react": "^19"
+  },
+  "devDependencies": {
+    "@types/react": "^19"
   }
 }

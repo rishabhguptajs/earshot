@@ -33,6 +33,9 @@ export interface CreatedSession {
   problems: string[];
   /** Number of messages replayed from a resumed transcript. */
   resumed: number;
+  /** Installs the approval callback; the TUI can only build one after it mounts. */
+  installPrompt(prompt: PermissionPrompt): void;
+  installAsk(ask: (question: string, options?: string[]) => Promise<string>): void;
   dispose(): Promise<void>;
 }
 
@@ -108,6 +111,8 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(store ? { store } : {}),
     problems: settings.problems,
     resumed: replayed.length,
+    installPrompt: (prompt) => agent.setPrompt(prompt),
+    installAsk: (ask) => agent.setAsk(ask),
     async dispose() {
       agent.dispose();
       await store?.flush();

@@ -1,0 +1,82 @@
+import {
+  createSession,
+  isPermissionMode,
+  MissingCredentialsError,
+  NoSessionToResumeError,
+  type PermissionMode,
+  UnknownModelError,
+} from '@earshot/core';
+import { runTui } from '@earshot/tui';
+import type { ParsedArgs } from '../args.ts';
+
+const DEFAULT_MODEL = 'anthropic/claude-opus-5';
+
+/**
+ * The default command: the interactive TUI.
+ *
+ * Refuses to start without a TTY rather than rendering into a pipe. Ink would
+ * happily draw frames into a redirect and produce a file full of escape
+ * sequences; someone piping earshot almost certainly wanted `-p`, and the error
+ * says so.
+ */
+export async function interactiveCommand(args: ParsedArgs): Promise<number> {
+  const flags = args.flags;
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    process.stderr.write(
+      'earshot needs an interactive terminal. For scripted use, run `earshot -p "<prompt>"`.\n',
+    );
+    return 2;
+  }
+
+  let mode: PermissionMode | undefined;
+  const requested = flags['permission-mode'];
+  if (typeof requested === 'string') {
+    if (!isPermissionMode(requested)) {
+      process.stderr.write(`"${requested}" is not a permission mode\n`);
+      return 2;
+    }
+    mode = requested;
+  }
+
+  // A bare `earshot "do the thing"` starts the TUI with that first turn already
+  // running, which is how most sessions actually begin.
+  const initialPrompt = args.positionals.join(' ').trim();
+
+  try {
+    const session = await createSession({
+      cwd: process.cwd(),
+      model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
+      ...(mode ? { mode } : {}),
+      ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
+      ...resumeFrom(flags),
+    });
+
+    return await runTui({
+      session,
+      model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
+      ...(initialPrompt !== '' ? { initialPrompt } : {}),
+    });
+  } catch (error) {
+    if (error instanceof UnknownModelError) {
+      process.stderr.write(`${error.message}\n\nrun \`earshot models\` to see what is available\n`);
+      return 2;
+    }
+    if (error instanceof MissingCredentialsError) {
+      process.stderr.write(`${error.message}\n`);
+      return 3;
+    }
+    if (error instanceof NoSessionToResumeError) {
+      process.stderr.write(`${error.message}\n`);
+      return 2;
+    }
+    throw error;
+  }
+}
+
+function resumeFrom(flags: ParsedArgs['flags']) {
+  if (typeof flags.resume === 'string') return { resume: { path: flags.resume } } as const;
+  if (flags.continue === true || flags.resume === true)
+    return { resume: { latest: true } } as const;
+  return {};
+}

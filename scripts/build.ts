@@ -7,7 +7,19 @@ import { rm } from 'node:fs/promises';
  * tool, and this keeps the dev dependency surface at zero.
  */
 /** Everything published as a dependency of `earshot` rather than inlined. */
-const EXTERNAL = ['@ai-sdk/*', 'ai', 'zod'];
+const EXTERNAL = [
+  '@ai-sdk/*',
+  'ai',
+  'zod',
+  // Ink ships a WASM layout engine and statically imports react-devtools-core
+  // from a module it only loads when DEV is set. Neither survives bundling, so
+  // the renderer and React stay real dependencies.
+  'ink',
+  'react',
+  'react/jsx-runtime',
+  'react-devtools-core',
+  'yoga-wasm-web',
+];
 
 const outdir = 'packages/cli/dist';
 await rm(outdir, { recursive: true, force: true });

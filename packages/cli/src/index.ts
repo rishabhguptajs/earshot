@@ -1,6 +1,7 @@
 import { VERSION } from '@earshot/core';
 import { parseArgs } from './args.ts';
 import { headlessCommand } from './commands/headless.ts';
+import { interactiveCommand } from './commands/interactive.ts';
 import { modelsCommand } from './commands/models.ts';
 
 const HELP = `earshot ${VERSION} - a terminal coding agent that actually listens
@@ -46,7 +47,5 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return 1;
   }
 
-  // The interactive TUI lands in M2; until then the bare command explains itself.
-  process.stdout.write(HELP);
-  return 0;
+  return interactiveCommand(args);
 }

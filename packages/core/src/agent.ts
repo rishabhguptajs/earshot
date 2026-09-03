@@ -87,11 +87,28 @@ export class Agent {
   private totalCostUsd = 0;
   /** Pre-change hashes for the batch currently executing. */
   private batchSnapshot: SnapshotFile[] = [];
+  /**
+   * Installed after construction by the TUI, which cannot supply them earlier:
+   * both resolve against React state that does not exist until the app mounts.
+   */
+  private promptFn: PermissionPrompt | undefined;
+  private askFn: ((question: string, options?: string[]) => Promise<string>) | undefined;
 
   constructor(private readonly options: AgentOptions) {
     this.tools = new ToolRegistry(options.tools ?? (BUILTIN_TOOLS as Tool<never>[]));
     this.rules = [...options.rules];
     this.mode = options.mode;
+    this.promptFn = options.prompt;
+    this.askFn = options.ask;
+  }
+
+  /** Replaces the approval callback. Passing undefined turns every ask into a denial. */
+  setPrompt(prompt: PermissionPrompt | undefined): void {
+    this.promptFn = prompt;
+  }
+
+  setAsk(ask: ((question: string, options?: string[]) => Promise<string>) | undefined): void {
+    this.askFn = ask;
   }
 
   get permissionMode(): PermissionMode {
@@ -309,7 +326,7 @@ export class Agent {
     if (decision.outcome === 'deny') return errorPart(call, decision.reason);
 
     if (decision.outcome === 'ask') {
-      const prompt = this.options.prompt;
+      const prompt = this.promptFn;
       if (!prompt) {
         return errorPart(
           call,
@@ -385,7 +402,7 @@ export class Agent {
       jobs: this.jobs,
       env: this.options.env ?? process.env,
       ask: async (question, choices) => {
-        const ask = this.options.ask;
+        const ask = this.askFn;
         if (!ask) {
           throw new ToolInputError(
             'this session cannot ask the user a question; decide with the information you have ' +
