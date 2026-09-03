@@ -24,3 +24,5 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       - run: bun test
+      - run: bun run build
+      - run: node packages/cli/bin/earshot.js --version
