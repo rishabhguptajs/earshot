@@ -14,8 +14,19 @@ import {
   type ToolCallPart,
   type WireApi,
 } from '@earshot/providers';
-import { render } from 'ink';
-import { App } from '../src/app.tsx';
+
+/**
+ * Ink decides once, when its module is evaluated, whether it is running in CI -
+ * and in CI it writes only <Static> output, never the live region. Every
+ * assertion here reads the live region, so under CI the captured stdout stays
+ * empty and every test times out. Clearing the variables before Ink is loaded
+ * is why these imports are dynamic and why they must stay dynamic: a static
+ * import is hoisted above the deletions and the suppression comes back.
+ */
+delete process.env.CI;
+delete process.env.CONTINUOUS_INTEGRATION;
+const { render } = await import('ink');
+const { App } = await import('../src/app.tsx');
 
 /**
  * Ink writes to whatever stdout it is handed. These fakes stand in for a
@@ -208,19 +219,7 @@ async function withApp(
   }
 }
 
-/**
- * These mount a real Ink app and read what it draws.
- *
- * They do not run on CI yet, and the reason is not understood: on all three
- * GitHub runners the captured stdout stays empty, while the same tests pass
- * locally - including with CI=true and GITHUB_ACTIONS=true set, so Ink's own
- * is-in-ci check is ruled out. Skipping is a placeholder, not a conclusion:
- * these cover the permission prompt and ask_user, which are worth having
- * covered everywhere, so this should be diagnosed rather than left.
- */
-const describeLocal = process.env.CI ? describe.skip : describe;
-
-describeLocal('the app renders', () => {
+describe('the app renders', () => {
   test('mounts and shows the status line', async () => {
     await withApp([{ text: 'hi' }], async ({ stdout }) => {
       await waitFor(stdout, 'test/scripted');
@@ -272,7 +271,7 @@ describeLocal('the app renders', () => {
   });
 });
 
-describeLocal('the permission prompt', () => {
+describe('the permission prompt', () => {
   test('appears with the real diff when a write needs approval', async () => {
     await withApp(
       [
@@ -309,7 +308,7 @@ describeLocal('the permission prompt', () => {
   });
 });
 
-describeLocal('ask_user', () => {
+describe('ask_user', () => {
   test('the question is shown and a typed answer is accepted', async () => {
     await withApp(
       [
