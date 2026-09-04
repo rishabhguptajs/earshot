@@ -32,6 +32,12 @@ export interface ToolContext {
   jobs: BackgroundJobs;
   /** What the agent declared it would change, and the guard that holds it to it. */
   scope: ScopeContract;
+  /**
+   * Narrows the tools offered to the model for the rest of the turn. Only ever
+   * a restriction: the names are intersected with what the session already
+   * allows, so nothing here can grant a tool the user did not.
+   */
+  restrictTools?(names: string[] | undefined): void;
   /** Records that a file was read, so `edit`/`write` can require a prior read. */
   markRead(path: string): void;
   hasRead(path: string): boolean;
