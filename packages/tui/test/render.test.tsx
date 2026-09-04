@@ -227,6 +227,16 @@ describe('the app renders', () => {
     });
   });
 
+  test('the status line shows how much of the context window is in use', async () => {
+    await withApp(
+      [{ text: 'hi' }],
+      async ({ stdout }) => {
+        await waitFor(stdout, '% ctx');
+      },
+      { initialPrompt: 'hello' },
+    );
+  });
+
   test('an initial prompt runs a turn and its answer reaches the screen', async () => {
     await withApp(
       [{ text: 'the answer is 41' }],

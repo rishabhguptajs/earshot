@@ -73,6 +73,8 @@ export function App({ session, model, initialPrompt }: AppProps) {
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [queued, setQueued] = useState(0);
   const [candidate, setCandidate] = useState<MemoryCandidate | undefined>();
+  const [context, setContext] = useState(() => agent.contextUse);
+  const [compacted, setCompacted] = useState(0);
 
   const [pending, setPending] = useState<
     | { request: PermissionRequest; reason: string; resolve: (choice: PromptChoice) => void }
@@ -149,6 +151,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
             }
             case 'usage':
               setCost(agent.costUsd);
+              setContext(agent.contextUse);
               break;
             case 'verification':
               // Shown to the user as it was shown to the model: the command, the
@@ -163,6 +166,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
               });
               break;
             case 'compacted':
+              setCompacted((count) => count + event.replaced);
               push({
                 kind: 'notice',
                 id: nextId(),
@@ -422,6 +426,8 @@ export function App({ session, model, initialPrompt }: AppProps) {
         todos={todos}
         busy={busy}
         queued={queued}
+        context={context}
+        compacted={compacted}
       />
     </Box>
   );
