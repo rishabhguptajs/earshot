@@ -70,7 +70,19 @@ describe('a session end to end', () => {
 
       const entries = await readEntries((session.store as { path: string }).path);
       const roles = messagesOf(branchTo(entries)).map((message) => message.role);
-      expect(roles).toEqual(['user', 'assistant', 'tool', 'assistant', 'tool', 'assistant']);
+      // The trailing user/assistant pair is the end-of-turn self-check: the turn
+      // changed a file, so the harness put the verification result in front of
+      // the model before it was allowed to report.
+      expect(roles).toEqual([
+        'user',
+        'assistant',
+        'tool',
+        'assistant',
+        'tool',
+        'assistant',
+        'user',
+        'assistant',
+      ]);
     });
   });
 

@@ -38,6 +38,7 @@ import {
   type ToolResult,
 } from './tools/types.ts';
 import type { ShadowGit, SnapshotFile } from './undo/shadow-git.ts';
+import { detectTestCommand, runVerification, type VerificationResult } from './verify/index.ts';
 
 /** Everything the TUI and the headless renderer need to show a turn. */
 export type AgentEvent =
@@ -51,6 +52,7 @@ export type AgentEvent =
   | { type: 'usage'; usage: Usage; costUsd: number }
   | { type: 'compacted'; replaced: number; summary: string }
   | { type: 'scope_concern'; concern: ScopeConcern; accepted: boolean }
+  | { type: 'verification'; result: VerificationResult }
   | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' }
   | { type: 'error'; error: EarshotError };
 
@@ -83,6 +85,12 @@ export interface AgentOptions {
   onCompaction?: (summary: string, historyCut: number) => void | Promise<void>;
   /** Overrides for the scope guard. */
   scope?: Partial<ScopeOptions>;
+  /**
+   * Running the project's tests after a turn that changed files, and reporting
+   * what they printed. `enabled: false` turns it off; `command` overrides
+   * detection.
+   */
+  verify?: { enabled?: boolean; command?: string; timeoutMs?: number };
 }
 
 const DEFAULT_MAX_STEPS = 100;
@@ -128,6 +136,9 @@ export class Agent {
   private compactionPreamble: Message | undefined;
   /** Tokens in the last request actually sent, for the status line. */
   private lastRequestTokens = 0;
+  /** Whether anything has been changed since the last end-of-turn check. */
+  private mutatedSinceCheck = false;
+  private checksThisTurn = 0;
   /**
    * Installed after construction by the TUI, which cannot supply them earlier:
    * both resolve against React state that does not exist until the app mounts.
@@ -210,6 +221,8 @@ export class Agent {
     // The budget is per turn; the declaration outlives one, because a follow-up
     // like "now do the same for the other file" is the same piece of work.
     this.scope.beginTurn();
+    this.mutatedSinceCheck = false;
+    this.checksThisTurn = 0;
     await this.append({ role: 'user', content: [{ type: 'text', text: prompt }] });
 
     const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_STEPS;
@@ -285,8 +298,14 @@ export class Agent {
         (part): part is ToolCallPart => part.type === 'tool_call',
       );
       if (calls.length === 0) {
-        yield { type: 'turn_end', reason: 'stop' };
-        return;
+        const check = await this.selfCheck(signal);
+        if (!check) {
+          yield { type: 'turn_end', reason: 'stop' };
+          return;
+        }
+        if (check.verification) yield { type: 'verification', result: check.verification };
+        await this.append(check.message);
+        continue;
       }
 
       const results: ToolResultPart[] = [];
@@ -434,6 +453,7 @@ export class Agent {
       }
       // Counted after approval, so the running total is what was actually done.
       this.scope.record(request);
+      this.mutatedSinceCheck = true;
     }
 
     // Hashed here, immediately before the change and after approval, so the
@@ -487,6 +507,66 @@ export class Agent {
       this.scope.widen(concern, concern.kind === 'out-of-scope-file' ? concern.path : undefined);
     }
     return true;
+  }
+
+  /**
+   * The end-of-turn check: run the project's tests, and make the model compare
+   * what was asked for with what changed before it answers.
+   *
+   * It runs only on a turn that changed something, and at most twice, so a
+   * model that keeps editing after a failure still terminates. The output is
+   * handed over verbatim - a summary of it is exactly where "tests pass" from an
+   * agent that never ran them hides.
+   */
+  private async selfCheck(
+    signal: AbortSignal,
+  ): Promise<{ message: Message; verification?: VerificationResult } | undefined> {
+    if (!this.mutatedSinceCheck || this.checksThisTurn >= 2 || signal.aborted) return undefined;
+    this.mutatedSinceCheck = false;
+    this.checksThisTurn++;
+
+    const configured = this.options.verify;
+    const detected =
+      configured?.enabled === false
+        ? undefined
+        : configured?.command
+          ? { command: configured.command, source: 'configuration' }
+          : await detectTestCommand(this.options.cwd);
+
+    const verification = detected
+      ? await runVerification(detected.command, detected.source, {
+          cwd: this.options.cwd,
+          env: this.options.env ?? process.env,
+          signal,
+          ...(configured?.timeoutMs !== undefined ? { timeoutMs: configured.timeoutMs } : {}),
+        })
+      : undefined;
+
+    const evidence = verification
+      ? `\`${verification.command}\` (from ${verification.source}) exited ` +
+        `${verification.timedOut ? 'after timing out' : String(verification.exitCode)}. Its ` +
+        `output, verbatim:\n\n${verification.output || '(no output)'}`
+      : 'No test command was detected for this project, so nothing was verified. Say that ' +
+        'plainly rather than implying the change works.';
+
+    return {
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              `<self-check>\nThis turn changed files. Before you answer, compare the original ` +
+              `request with what actually changed, and report anything you skipped, narrowed, ` +
+              `left unverified or that is failing. Four of five things done is that report, ` +
+              `not "done".\n\n${evidence}\n\nIf something is failing, fix it or say what is ` +
+              `failing and why - do not describe the run as passing. This message is from the ` +
+              `harness, not the user; answer them, not it.\n</self-check>`,
+          },
+        ],
+      },
+      ...(verification ? { verification } : {}),
+    };
   }
 
   /** Records pre-change contents for paths not already captured in this batch. */

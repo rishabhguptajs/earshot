@@ -150,6 +150,25 @@ export function App({ session, model, initialPrompt }: AppProps) {
             case 'usage':
               setCost(agent.costUsd);
               break;
+            case 'verification':
+              // Shown to the user as it was shown to the model: the command, the
+              // exit code and the output, none of it summarised.
+              push({
+                kind: 'tool',
+                id: nextId(),
+                name: event.result.command,
+                title: `${event.result.command} - exit ${event.result.exitCode ?? 'killed'}`,
+                output: event.result.output,
+                ...(event.result.exitCode === 0 ? {} : { isError: true }),
+              });
+              break;
+            case 'compacted':
+              push({
+                kind: 'notice',
+                id: nextId(),
+                text: `compacted: ${event.replaced} earlier messages are now a summary`,
+              });
+              break;
             case 'error':
               push({
                 kind: 'notice',
