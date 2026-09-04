@@ -6,6 +6,16 @@ import type {
   ToolResultPart,
   Usage,
 } from '@earshot/providers';
+import {
+  type CompactionPolicy,
+  compact,
+  DEFAULT_SHAPER_OPTIONS,
+  estimateTokens,
+  type ShaperOptions,
+  SUMMARY_PROMPT,
+  shapeMessages,
+  shouldCompact,
+} from './context/index.ts';
 import type { ResolvedModel } from './model.ts';
 import { streamModel, turnCost } from './model.ts';
 import {
@@ -38,6 +48,7 @@ export type AgentEvent =
   | { type: 'tool_end'; toolCallId: string; toolName: string; result: ToolResult }
   | { type: 'permission'; request: PermissionRequest; reason: string }
   | { type: 'usage'; usage: Usage; costUsd: number }
+  | { type: 'compacted'; replaced: number; summary: string }
   | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' }
   | { type: 'error'; error: EarshotError };
 
@@ -60,6 +71,14 @@ export interface AgentOptions {
   onMessage?: (message: Message) => void | Promise<void>;
   /** Snapshot store for undo. Absent means this session keeps no undo history. */
   shadow?: ShadowGit;
+  /** Overrides for the context shapers. */
+  shapers?: Partial<ShaperOptions>;
+  compaction?: Partial<CompactionPolicy>;
+  /**
+   * Called when compaction has written a summary, so the session can append a
+   * `summary` entry. The entry records what was summarised; it removes nothing.
+   */
+  onCompaction?: (summary: string, historyCut: number) => void | Promise<void>;
 }
 
 const DEFAULT_MAX_STEPS = 100;
@@ -87,6 +106,15 @@ export class Agent {
   private totalCostUsd = 0;
   /** Pre-change hashes for the batch currently executing. */
   private batchSnapshot: SnapshotFile[] = [];
+  /**
+   * Where the live request starts, and what stands in for everything before it.
+   * Compaction cannot shorten `history` - that would rewrite the past - so it
+   * records a cut and a preamble, and the request is rebuilt from those.
+   */
+  private compactedAt = 0;
+  private compactionPreamble: Message | undefined;
+  /** Tokens in the last request actually sent, for the status line. */
+  private lastRequestTokens = 0;
   /**
    * Installed after construction by the TUI, which cannot supply them earlier:
    * both resolve against React state that does not exist until the app mounts.
@@ -121,6 +149,16 @@ export class Agent {
 
   get costUsd(): number {
     return this.totalCostUsd;
+  }
+
+  /** Estimated tokens in the last request, and the window they have to fit in. */
+  get contextUse(): { tokens: number; window: number } {
+    return { tokens: this.lastRequestTokens, window: this.options.model.model.contextWindow ?? 0 };
+  }
+
+  /** Files read or written this session, in the order they were first touched. */
+  get touchedFiles(): string[] {
+    return [...this.readFiles];
   }
 
   /**
@@ -160,6 +198,10 @@ export class Agent {
         await this.append(this.queued.shift() as Message);
       }
 
+      for await (const event of this.prepareRequest(signal)) yield event;
+      const messages = this.requestMessages();
+      this.lastRequestTokens = estimateTokens(messages, this.options.system);
+
       yield { type: 'model_start', model: modelName };
 
       let assistant: Message | undefined;
@@ -167,9 +209,7 @@ export class Agent {
 
       for await (const event of streamModel(this.options.registry, this.options.model, {
         system: this.options.system,
-        // A copy, not the live array: an adapter that reads messages lazily would
-        // otherwise see entries appended after the request was made.
-        messages: [...this.history],
+        messages,
         tools: this.tools.definitions(),
         abortSignal: signal,
       })) {
@@ -392,6 +432,72 @@ export class Agent {
     const label = calls.map((call) => call.toolName).join(', ');
     await shadow.record(this.batchSnapshot, label).catch(() => undefined);
     this.batchSnapshot = [];
+  }
+
+  /**
+   * The messages for one request: the live tail of history, any compaction
+   * preamble in front of it, then the cheap shapers. A copy, never the live
+   * array - an adapter that reads messages lazily would otherwise see entries
+   * appended after the request was made.
+   */
+  private requestMessages(): Message[] {
+    const tail = this.history.slice(this.compactedAt);
+    const base = this.compactionPreamble ? [this.compactionPreamble, ...tail] : tail;
+    return shapeMessages(base, { ...DEFAULT_SHAPER_OPTIONS, ...this.options.shapers });
+  }
+
+  /** Compacts if the shaped request would still be too large for the window. */
+  private async *prepareRequest(signal: AbortSignal): AsyncGenerator<AgentEvent> {
+    const window = this.options.model.model.contextWindow ?? 0;
+    const policy = { threshold: 0.8, keepRecentMessages: 8, ...this.options.compaction };
+    const shaped = this.requestMessages();
+    if (!shouldCompact(shaped, this.options.system, window, policy)) return;
+
+    const result = await compact({
+      messages: shaped,
+      system: this.options.system,
+      contextWindow: window,
+      policy,
+      todos: this.todos
+        .list()
+        .filter((todo) => todo.status !== 'done')
+        .map((todo) => todo.text),
+      filesTouched: this.touchedFiles,
+      summarize: (messages) => this.summarise(messages, signal),
+    }).catch(() => undefined);
+    if (!result) return;
+
+    // The cut is expressed against the shaped array, which has the same length
+    // and order as the tail it was built from, minus the preamble.
+    const offset = this.compactionPreamble ? 1 : 0;
+    this.compactedAt += Math.max(0, result.replaced - offset);
+    this.compactionPreamble = result.messages[0];
+    this.lastRequestTokens = estimateTokens(this.requestMessages(), this.options.system);
+    // The cut is reported as a history index, not as a count of shaped
+    // messages: the session layer maps it back to the entry ids the summary
+    // stands in for, and those are indexed by history position.
+    await this.options.onCompaction?.(result.summary, this.compactedAt);
+    yield { type: 'compacted', replaced: result.replaced, summary: result.summary };
+  }
+
+  /** One extra model call, with no tools: the summary that compaction stands on. */
+  private async summarise(messages: Message[], signal: AbortSignal): Promise<string> {
+    let text = '';
+    for await (const event of streamModel(this.options.registry, this.options.model, {
+      system: SUMMARY_PROMPT,
+      messages: [...messages, { role: 'user', content: [{ type: 'text', text: SUMMARY_PROMPT }] }],
+      abortSignal: signal,
+    })) {
+      if (event.type === 'text_delta') text += event.text;
+      if (event.type === 'finish') {
+        for (const part of event.message.content) {
+          if (part.type === 'text' && text === '') text = part.text;
+        }
+      }
+      if (event.type === 'error') throw new Error(event.error.message);
+    }
+    if (text.trim() === '') throw new Error('the model returned an empty summary');
+    return text;
   }
 
   private context(signal: AbortSignal): ToolContext {

@@ -98,6 +98,20 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
     ...(shadow ? { shadow } : {}),
     ...(store ? { onMessage: (message) => void store?.appendMessage(message) } : {}),
+    ...(store
+      ? {
+          // Appended, never substituted for what it summarises: the transcript
+          // on disk stays complete, so a resumed session can replay the real
+          // messages rather than a recollection of them.
+          onCompaction: (summary: string, historyCut: number) => {
+            void store?.append({
+              type: 'summary',
+              text: summary,
+              replaces: store?.messageIds.slice(0, historyCut) ?? [],
+            });
+          },
+        }
+      : {}),
   };
 
   const agent = new Agent(agentOptions);

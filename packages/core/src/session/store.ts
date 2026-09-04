@@ -99,6 +99,12 @@ export function projectDir(cwd: string): string {
  * and the reader drops exactly that line.
  */
 export class SessionStore {
+  /**
+   * Ids of the message entries written so far, in order. Compaction needs them
+   * to say which entries its summary stands in for, and only the store knows
+   * the ids - the agent counts messages, not entries.
+   */
+  readonly messageIds: string[] = [];
   private tail: string | null = null;
   private queue: Promise<void> = Promise.resolve();
 
@@ -173,7 +179,9 @@ export class SessionStore {
   }
 
   appendMessage(message: Message): Promise<string> {
-    return this.append({ type: 'message', message });
+    const id = this.append({ type: 'message', message });
+    void id.then((value) => this.messageIds.push(value));
+    return id;
   }
 
   /** Resolves once every queued write has landed. */
