@@ -35,9 +35,12 @@ import { type ScopeConcern, ScopeContract, type ScopeOptions } from './scope/ind
 import { narrow } from './skills/discover.ts';
 import { BUILTIN_TOOLS, ToolRegistry } from './tools/index.ts';
 import { BackgroundJobs } from './tools/jobs.ts';
+import { DEFAULT_SUBAGENT_TOOLS } from './tools/task.ts';
 import { MemoryTodoStore } from './tools/todo.ts';
 import {
   type PermissionRequest,
+  type SubagentRequest,
+  type SubagentResult,
   type Tool,
   type ToolContext,
   ToolInputError,
@@ -60,6 +63,7 @@ export type AgentEvent =
   | { type: 'scope_concern'; concern: ScopeConcern; accepted: boolean }
   | { type: 'verification'; result: VerificationResult }
   | { type: 'hook'; event: HookEvent; blocked?: string; problems: string[] }
+  | { type: 'subagent'; description: string; steps: number; costUsd: number }
   | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' }
   | { type: 'error'; error: EarshotError };
 
@@ -100,6 +104,17 @@ export interface AgentOptions {
   verify?: { enabled?: boolean; command?: string; timeoutMs?: number };
   /** User-configured hooks. Absent means nothing is hooked and nothing is run. */
   hooks?: HookRunner;
+  /**
+   * Shared rather than constructed, so a subagent is held to the same scope the
+   * parent declared. A subagent with a scope of its own would be a hole straight
+   * through the contract: the parent says which files it will touch, and then
+   * spawns something that never agreed to it.
+   */
+  scopeContract?: ScopeContract;
+  /** Set on a subagent. Its cost lands on the parent's total, not beside it. */
+  onCost?: (costUsd: number) => void;
+  /** Steps a subagent this agent spawns may take. */
+  subagentMaxSteps?: number;
 }
 
 const DEFAULT_MAX_STEPS = 100;
@@ -163,7 +178,7 @@ export class Agent {
 
   constructor(private readonly options: AgentOptions) {
     this.tools = new ToolRegistry(options.tools ?? (BUILTIN_TOOLS as Tool<never>[]));
-    this.scope = new ScopeContract(options.cwd, options.scope ?? {});
+    this.scope = options.scopeContract ?? new ScopeContract(options.cwd, options.scope ?? {});
     this.rules = [...options.rules];
     this.mode = options.mode;
     this.promptFn = options.prompt;
@@ -202,6 +217,16 @@ export class Agent {
 
   get costUsd(): number {
     return this.totalCostUsd;
+  }
+
+  /**
+   * Adds to this session's spend. A subagent calls its parent's, so one session
+   * has one number: a budget that a subagent could spend outside would not be a
+   * budget.
+   */
+  private addCost(costUsd: number): void {
+    this.totalCostUsd += costUsd;
+    this.options.onCost?.(costUsd);
   }
 
   /** Estimated tokens in the last request, and the window they have to fit in. */
@@ -323,7 +348,7 @@ export class Agent {
           case 'finish': {
             assistant = event.message;
             const costUsd = turnCost(this.options.model.model, event.usage);
-            this.totalCostUsd += costUsd;
+            this.addCost(costUsd);
             yield { type: 'usage', usage: event.usage, costUsd };
             break;
           }
@@ -809,11 +834,84 @@ export class Agent {
       restrictTools: (names) => {
         this.toolRestriction = names;
       },
+      // Absent on a subagent, so nesting stops at one level: an agent that could
+      // spawn agents that spawn agents has no bound anyone can reason about.
+      ...(this.options.onCost
+        ? {}
+        : { runSubagent: (request, sub) => this.subagent(request, sub) }),
       markRead: (path) => {
         this.readFiles.add(path);
       },
       hasRead: (path) => this.readFiles.has(path),
     };
+  }
+
+  /**
+   * Runs a nested agent and returns its answer.
+   *
+   * What it inherits is the whole design. Permission mode and rules, so nothing
+   * it does escapes the gate. The parent's ScopeContract object, so a file
+   * nobody declared still prompts. The parent's cost total, so one session has
+   * one number. What it does not inherit is context: it starts empty and is
+   * given the prompt, which is the point - and it hands back an answer, not a
+   * transcript, so the parent's window holds the conclusion rather than the
+   * work.
+   */
+  private async subagent(request: SubagentRequest, signal: AbortSignal): Promise<SubagentResult> {
+    const allowed = new Set(request.tools?.length ? request.tools : DEFAULT_SUBAGENT_TOOLS);
+    // Intersection, never a union: a subagent cannot be handed a tool the parent
+    // session does not have, whoever named it.
+    const tools = this.tools
+      .list()
+      .filter((tool) => allowed.has(tool.name) && tool.name !== 'task');
+
+    // The parent's persistence callbacks are dropped rather than passed on: a
+    // subagent's messages are not the session's transcript, and writing them
+    // there would replay them on the next resume as if the user had said them.
+    const { onMessage: _persist, onCompaction: _summarised, ...inherited } = this.options;
+
+    const child = new Agent({
+      ...inherited,
+      system:
+        `${this.systemPrompt}\n\n<subagent>\nYou are running as a subagent for one ` +
+        `self-contained task: ${request.description}. You cannot see the conversation that ` +
+        'sent you here, and only your final message is returned - so answer in full, and ' +
+        'say plainly what you could not find or could not do rather than implying success.' +
+        '\n</subagent>',
+      tools,
+      scopeContract: this.scope,
+      onCost: (costUsd) => this.addCost(costUsd),
+      maxSteps: this.options.subagentMaxSteps ?? 30,
+    });
+    child.setPrompt(this.promptFn);
+    child.setAsk(this.askFn);
+
+    let text = '';
+    let steps = 0;
+    let stoppedBecause: SubagentResult['stoppedBecause'];
+    const before = this.totalCostUsd;
+
+    for await (const event of child.runTurn(request.prompt, signal)) {
+      if (event.type === 'model_start') steps++;
+      if (event.type === 'message') {
+        const said = event.message.content
+          .filter((part) => part.type === 'text')
+          .map((part) => (part.type === 'text' ? part.text : ''))
+          .join('');
+        if (said.trim() !== '') text = said;
+      }
+      if (event.type === 'turn_end' && event.reason !== 'stop') stoppedBecause = event.reason;
+      if (event.type === 'error') stoppedBecause = 'error';
+      // Prompts and scope questions the subagent raised are the user's to see.
+      if (event.type === 'permission' || event.type === 'scope_concern' || event.type === 'hook') {
+        this.pending.push(event);
+      }
+    }
+    child.dispose();
+
+    const costUsd = this.totalCostUsd - before;
+    this.pending.push({ type: 'subagent', description: request.description, steps, costUsd });
+    return { text: text.trim(), steps, costUsd, ...(stoppedBecause ? { stoppedBecause } : {}) };
   }
 
   private async append(message: Message): Promise<void> {
