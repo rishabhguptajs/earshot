@@ -86,6 +86,101 @@ describe('a session end to end', () => {
     });
   });
 
+  test('rewinding drops later messages from the next request but not from the file', async () => {
+    await inSandbox(async (cwd) => {
+      const model = scripted([{ text: 'first' }, { text: 'second' }, { text: 'third' }]);
+      const session = await createSession({
+        cwd,
+        model: 'test/scripted',
+        mode: 'auto',
+        registry: model.registry,
+      });
+
+      await drain(session.agent.runTurn('one', signal()));
+      await drain(session.agent.runTurn('two', signal()));
+      const before = await readEntries((session.store as { path: string }).path);
+
+      const kept = await session.rewindTo(
+        (await session.branch()).find(
+          (entry) => entry.type === 'message' && entry.message.role === 'assistant',
+        )?.id as string,
+      );
+      expect(kept).toBe(2);
+      expect(session.agent.history).toHaveLength(2);
+
+      // Nothing was removed: the abandoned branch is still on disk.
+      const after = await readEntries((session.store as { path: string }).path);
+      expect(after.length).toBeGreaterThanOrEqual(before.length);
+
+      await drain(session.agent.runTurn('three', signal()));
+      await session.dispose();
+
+      // The new turn hangs off the rewound entry, so the branch skips "two".
+      const branch = messagesOf(
+        branchTo(await readEntries((session.store as { path: string }).path)),
+      );
+      const texts = branch.flatMap((message) =>
+        message.content.filter((part) => part.type === 'text').map((part) => part.text),
+      );
+      expect(texts).toContain('three');
+      expect(texts).not.toContain('two');
+    });
+  });
+
+  test('forking continues in a new transcript that records where it came from', async () => {
+    await inSandbox(async (cwd) => {
+      const model = scripted([{ text: 'first' }, { text: 'second' }]);
+      const session = await createSession({
+        cwd,
+        model: 'test/scripted',
+        mode: 'auto',
+        registry: model.registry,
+      });
+      await drain(session.agent.runTurn('one', signal()));
+      const original = (session.store as { path: string }).path;
+
+      const forked = await session.fork();
+      expect(forked).toBeDefined();
+
+      await drain(session.agent.runTurn('two', signal()));
+      await session.dispose();
+
+      // The original is untouched by anything that happened after the fork.
+      const originalTexts = JSON.stringify(messagesOf(branchTo(await readEntries(original))));
+      expect(originalTexts).not.toContain('two');
+    });
+  });
+
+  test('undo steps back one batch at a time', async () => {
+    await inSandbox(async (cwd) => {
+      await writeFile(join(cwd, 'a.txt'), 'original\n');
+      const model = scripted([
+        { calls: [{ name: 'write', input: { path: 'a.txt', content: 'first\n' } }] },
+        { text: 'done' },
+        { calls: [{ name: 'write', input: { path: 'a.txt', content: 'second\n' } }] },
+        { text: 'done' },
+      ]);
+      const session = await createSession({
+        cwd,
+        model: 'test/scripted',
+        mode: 'auto',
+        registry: model.registry,
+      });
+
+      await drain(session.agent.runTurn('write it', signal()));
+      await drain(session.agent.runTurn('write it again', signal()));
+      expect(await readFile(join(cwd, 'a.txt'), 'utf8')).toBe('second\n');
+
+      await session.undo();
+      expect(await readFile(join(cwd, 'a.txt'), 'utf8')).toBe('first\n');
+
+      // A second undo goes back another batch rather than repeating the first.
+      await session.undo();
+      expect(await readFile(join(cwd, 'a.txt'), 'utf8')).toBe('original\n');
+      await session.dispose();
+    });
+  });
+
   test('resuming replays the previous transcript into the new turn', async () => {
     await inSandbox(async (cwd) => {
       const first = scripted([{ text: 'noted' }]);

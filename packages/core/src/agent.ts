@@ -212,6 +212,22 @@ export class Agent {
     return this.queued.length;
   }
 
+  /**
+   * Replaces the in-memory history, for `/rewind` and `/fork`.
+   *
+   * The transcript on disk is untouched: rewinding points the next append at an
+   * earlier entry and the abandoned branch stays in the file. What changes is
+   * only which messages the next request is built from - and the compaction
+   * state resets with them, since a summary of messages that are no longer in
+   * the history would describe work the model can no longer see.
+   */
+  replaceHistory(messages: Message[]): void {
+    this.history.length = 0;
+    this.history.push(...messages);
+    this.compactedAt = 0;
+    this.compactionPreamble = undefined;
+  }
+
   /** Ends the session's background processes. Safe to call more than once. */
   dispose(): void {
     this.jobs.killAll();

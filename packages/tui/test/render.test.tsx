@@ -130,6 +130,9 @@ function scriptedRegistry(turns: Turn[]) {
   };
 }
 
+/** Entry ids the app asked to rewind to, so a test can assert it was reached. */
+const rewound: string[] = [];
+
 function sessionFor(turns: Turn[], cwd: string, mode: 'auto' | 'ask' = 'auto'): CreatedSession {
   const { registry, resolved } = scriptedRegistry(turns);
   const agent = new Agent({ registry, model: resolved, cwd, system: '', mode, rules: [] });
@@ -139,6 +142,22 @@ function sessionFor(turns: Turn[], cwd: string, mode: 'auto' | 'ask' = 'auto'): 
     resumed: 0,
     installPrompt: (prompt) => agent.setPrompt(prompt),
     installAsk: (ask) => agent.setAsk(ask),
+    // The session-tree commands are wired to these; the storage layer has its
+    // own tests, so what is under test here is that the commands reach them.
+    branch: async () =>
+      agent.history.map((message, index) => ({
+        type: 'message' as const,
+        id: `entry_${index}`,
+        parentId: index === 0 ? null : `entry_${index - 1}`,
+        timestamp: new Date().toISOString(),
+        message,
+      })),
+    rewindTo: async (entryId: string) => {
+      rewound.push(entryId);
+      return 1;
+    },
+    fork: async () => 'forked-session',
+    undo: async () => ({ label: 'write', restored: ['a.txt'], wasCreated: [] }),
     async dispose() {
       agent.dispose();
     },
@@ -315,6 +334,53 @@ describe('the permission prompt', () => {
       },
       { mode: 'ask', initialPrompt: 'write b.txt' },
     );
+  });
+});
+
+describe('the session tree', () => {
+  test('/tree lists the prompts of this session', async () => {
+    await withApp(
+      [{ text: 'answered' }],
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'answered');
+        await type(stdin, '/tree');
+        await waitFor(stdout, '1. the first thing');
+        expect(stdout.output).toContain('/rewind');
+      },
+      { initialPrompt: 'the first thing' },
+    );
+  });
+
+  test('/rewind goes back to the state before the chosen prompt', async () => {
+    rewound.length = 0;
+    await withApp(
+      [{ text: 'answered' }],
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'answered');
+        await type(stdin, '/rewind 1');
+        await waitFor(stdout, 'rewound to before prompt 1');
+        // Nothing is deleted; the user is told so, because that is what makes
+        // rewinding safe to do on a hunch.
+        expect(stdout.output).toContain('Nothing was deleted');
+        expect(rewound).toHaveLength(1);
+      },
+      { initialPrompt: 'the first thing' },
+    );
+  });
+
+  test('/rewind with no such prompt says so instead of guessing', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/rewind 9');
+      await waitFor(stdout, 'no prompt 9');
+    });
+  });
+
+  test('/undo reports what it restored', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/undo');
+      await waitFor(stdout, 'undid write');
+      expect(stdout.output).toContain('a.txt');
+    });
   });
 });
 

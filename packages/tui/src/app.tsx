@@ -285,6 +285,101 @@ export function App({ session, model, initialPrompt }: AppProps) {
     [agent, candidate, model, push],
   );
 
+  /**
+   * `/tree`, `/rewind`, `/fork` and `/undo`.
+   *
+   * The numbering is over the user's own prompts rather than over every entry:
+   * "go back to before I asked for the refactor" is how people think about a
+   * session, and an entry id is not something anyone can pick out of a list.
+   */
+  const sessionTree = useCallback(
+    async (name: string, argument?: string) => {
+      const entries = await session.branch();
+      const prompts = entries.filter(
+        (entry) =>
+          entry.type === 'message' &&
+          entry.message.role === 'user' &&
+          entry.message.content.some(
+            (part) => part.type === 'text' && !part.text.startsWith('<self-check>'),
+          ),
+      );
+
+      if (name === 'tree' || !argument) {
+        if (prompts.length === 0) {
+          push({ kind: 'notice', id: nextId(), text: 'nothing in this session yet' });
+          return;
+        }
+        const lines = prompts.map((entry, index) => {
+          const text =
+            entry.type === 'message'
+              ? (entry.message.content.find((part) => part.type === 'text')?.text ?? '')
+              : '';
+          return `  ${index + 1}. ${text.split('\n')[0]?.slice(0, 70) ?? ''}`;
+        });
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `${lines.join('\n')}\n\n  /rewind <n> goes back to one · /fork <n> branches from it`,
+        });
+        return;
+      }
+
+      const index = Number.parseInt(argument, 10) - 1;
+      const target = prompts[index];
+      if (!target) {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `no prompt ${argument} in this session - /tree lists them`,
+          color: theme.warning,
+        });
+        return;
+      }
+      // The entry before the chosen prompt: rewinding "to" a prompt means the
+      // state the session was in when it was typed, not after it ran.
+      const previous = entries[entries.indexOf(target) - 1] ?? target;
+
+      if (name === 'rewind') {
+        const kept = await session.rewindTo(previous.id);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `rewound to before prompt ${index + 1}; ${kept} message${kept === 1 ? '' : 's'} kept. Nothing was deleted - the rest is still in the transcript as another branch.`,
+        });
+        return;
+      }
+
+      const forked = await session.fork(previous.id);
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: forked
+          ? `forked from prompt ${index + 1} into ${forked}; this session continues there and the original is untouched`
+          : 'could not fork this session',
+        ...(forked ? {} : { color: theme.warning }),
+      });
+    },
+    [push, session],
+  );
+
+  const undoLast = useCallback(async () => {
+    const result = await session.undo();
+    if (!result) {
+      push({ kind: 'notice', id: nextId(), text: 'nothing to undo', color: theme.warning });
+      return;
+    }
+    const created = result.wasCreated.length
+      ? ` Left in place because the batch created them: ${result.wasCreated.join(', ')}.`
+      : '';
+    push({
+      kind: 'notice',
+      id: nextId(),
+      text: result.restored.length
+        ? `undid ${result.label}: restored ${result.restored.join(', ')}.${created}`
+        : `nothing to restore from ${result.label}.${created}`,
+    });
+  }, [push, session]);
+
   const handleCommand = useCallback(
     (command: string) => {
       // Split once, keeping the remainder: `split(/\s+/, 2)` discards everything
@@ -318,6 +413,23 @@ export function App({ session, model, initialPrompt }: AppProps) {
         void showMemories(argument);
         return;
       }
+      if (name === 'tree' || name === 'rewind' || name === 'fork') {
+        if (busy) {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: 'finish or interrupt the current turn first (esc)',
+            color: theme.warning,
+          });
+          return;
+        }
+        void sessionTree(name, argument);
+        return;
+      }
+      if (name === 'undo') {
+        void undoLast();
+        return;
+      }
       push({
         kind: 'notice',
         id: nextId(),
@@ -325,7 +437,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         color: theme.warning,
       });
     },
-    [agent, exit, push, showMemories],
+    [agent, busy, exit, push, sessionTree, showMemories, undoLast],
   );
 
   const submit = useCallback(

@@ -184,6 +184,21 @@ export class SessionStore {
     return id;
   }
 
+  /**
+   * Points the next append at an earlier entry.
+   *
+   * This is all a rewind is at the storage layer: nothing is removed, and the
+   * entries written after it become a second branch of the same file. The old
+   * branch stays readable, which is what makes rewinding safe to do casually.
+   */
+  rewind(entryId: string): void {
+    this.tail = entryId;
+  }
+
+  get tailId(): string | null {
+    return this.tail;
+  }
+
   /** Resolves once every queued write has landed. */
   flush(): Promise<void> {
     return this.queue;
