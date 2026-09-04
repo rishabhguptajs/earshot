@@ -85,6 +85,25 @@ A bare model id resolves against the first provider offering it, in registration
 order — convenient, but pin the provider in scripts, since the same model is often
 served by several.
 
+## In-session commands
+
+Typed at the prompt during an interactive session.
+
+| Command | Effect |
+|---|---|
+| `/mode <plan\|ask\|accept-edits\|auto\|yolo>` | Change the permission mode |
+| `/memory` | List remembered preferences, each with the sentence it came from |
+| `/memory forget <id>` | Delete one |
+| `/tree` | List this session's prompts, numbered |
+| `/rewind <n>` | Go back to the state before prompt `n`; nothing is deleted |
+| `/fork <n>` | Branch from prompt `n` into a new transcript |
+| `/undo` | Revert the last tool batch's file changes; again to step back further |
+| `/exit` | Quit |
+
+Two keystrokes are bound rather than typed: when a prompt contains a correction
+("use bun, not npm"), `ctrl+r` remembers it for this project and `ctrl+g`
+everywhere. Nothing is remembered unless you press one.
+
 ## Exit codes
 
 Meaningful, so CI can branch on them:
