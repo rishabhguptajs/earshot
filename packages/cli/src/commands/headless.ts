@@ -9,6 +9,7 @@ import {
   UnknownModelError,
 } from '@earshot/core';
 import type { ParsedArgs } from '../args.ts';
+import { startExtensions } from '../extensions.ts';
 
 const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
@@ -35,16 +36,22 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
     mode = requested;
   }
 
+  const extensions = await startExtensions(process.cwd());
+
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
     session = await createSession({
       cwd: process.cwd(),
+      extraTools: extensions.tools,
+      problems: extensions.problems,
+      onDispose: () => extensions.close(),
       model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
       ...(mode ? { mode } : {}),
       ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
       ...resumeFrom(flags),
     });
   } catch (error) {
+    await extensions.close();
     return reportStartupFailure(error);
   }
 
