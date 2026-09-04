@@ -1,6 +1,8 @@
 import { buildRegistry, type ProviderRegistry } from '@earshot/providers';
 import { Agent, type AgentOptions } from '../agent.ts';
 import { buildSystemPrompt } from '../context/system-prompt.ts';
+import { loadHooks } from '../hooks/config.ts';
+import { HookRunner } from '../hooks/runner.ts';
 import { resolveModel } from '../model.ts';
 import type { PermissionMode, PermissionPrompt } from '../permissions/engine.ts';
 import { loadSettings } from '../permissions/settings.ts';
@@ -114,13 +116,6 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ? { skills: [], commands: [], problems: [] }
     : await discoverExtensions(options.cwd);
 
-  const system = await buildSystemPrompt({
-    cwd: options.cwd,
-    mode,
-    model: modelRef,
-    skills: renderSkillIndex(discovered.skills),
-  });
-
   let store: SessionStore | undefined;
   let replayed: ReturnType<typeof messagesOf> = [];
 
@@ -138,6 +133,29 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
       version: VERSION,
     }).catch(() => undefined);
   }
+
+  const loadedHooks = options.noExtensions
+    ? { hooks: [], problems: [] }
+    : await loadHooks(options.cwd);
+  const hooks = new HookRunner(loadedHooks.hooks, {
+    cwd: options.cwd,
+    env: process.env,
+    sessionId: store?.id ?? 'ephemeral',
+    ...(store ? { transcriptPath: store.path } : {}),
+  });
+
+  // Built after the session id exists, because a SessionStart hook is told which
+  // session it is running for, and its context goes into the prompt it starts.
+  const started = hooks.has('SessionStart') ? await hooks.sessionStart() : undefined;
+  const system = await buildSystemPrompt({
+    cwd: options.cwd,
+    mode,
+    model: modelRef,
+    skills: renderSkillIndex(discovered.skills),
+    ...(started?.context.length
+      ? { extra: `<session-start>\n${started.context.join('\n\n')}\n</session-start>` }
+      : {}),
+  });
 
   const shadow = options.noUndo
     ? undefined
@@ -162,6 +180,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(options.ask ? { ask: options.ask } : {}),
     ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
     ...(sessionTools.length > BUILTIN_TOOLS.length ? { tools: sessionTools } : {}),
+    ...(hooks.isEmpty ? {} : { hooks }),
     ...(shadow ? { shadow } : {}),
     ...(store ? { onMessage: (message) => void store?.appendMessage(message) } : {}),
     ...(store
@@ -197,7 +216,13 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   return {
     agent,
     ...(store ? { store } : {}),
-    problems: [...settings.problems, ...discovered.problems, ...(options.problems ?? [])],
+    problems: [
+      ...settings.problems,
+      ...discovered.problems,
+      ...loadedHooks.problems,
+      ...(started?.problems ?? []),
+      ...(options.problems ?? []),
+    ],
     resumed: replayed.length,
     skills: discovered.skills,
     commands: discovered.commands,
@@ -247,6 +272,9 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     },
     async dispose() {
       agent.dispose();
+      // Best effort: a SessionEnd hook that fails must not stop the session from
+      // closing, and nothing can act on its answer by this point anyway.
+      if (hooks.has('SessionEnd')) await hooks.sessionEnd().catch(() => undefined);
       await store?.flush();
       await options.onDispose?.();
     },

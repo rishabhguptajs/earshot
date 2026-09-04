@@ -4,6 +4,7 @@ import type {
   ProviderRegistry,
   ToolCallPart,
   ToolDefinition,
+  ToolResultOutput,
   ToolResultPart,
   Usage,
 } from '@earshot/providers';
@@ -17,6 +18,9 @@ import {
   shapeMessages,
   shouldCompact,
 } from './context/index.ts';
+import type { HookEvent } from './hooks/config.ts';
+import type { HookOutcome } from './hooks/run.ts';
+import type { HookRunner } from './hooks/runner.ts';
 import type { ResolvedModel } from './model.ts';
 import { streamModel, turnCost } from './model.ts';
 import {
@@ -55,6 +59,7 @@ export type AgentEvent =
   | { type: 'compacted'; replaced: number; summary: string }
   | { type: 'scope_concern'; concern: ScopeConcern; accepted: boolean }
   | { type: 'verification'; result: VerificationResult }
+  | { type: 'hook'; event: HookEvent; blocked?: string; problems: string[] }
   | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' }
   | { type: 'error'; error: EarshotError };
 
@@ -93,6 +98,8 @@ export interface AgentOptions {
    * detection.
    */
   verify?: { enabled?: boolean; command?: string; timeoutMs?: number };
+  /** User-configured hooks. Absent means nothing is hooked and nothing is run. */
+  hooks?: HookRunner;
 }
 
 const DEFAULT_MAX_STEPS = 100;
@@ -245,10 +252,35 @@ export class Agent {
     // The budget is per turn; the declaration outlives one, because a follow-up
     // like "now do the same for the other file" is the same piece of work.
     this.scope.beginTurn();
+    this.options.hooks?.beginTurn();
     this.toolRestriction = undefined;
     this.mutatedSinceCheck = false;
     this.checksThisTurn = 0;
-    await this.append({ role: 'user', content: [{ type: 'text', text: prompt }] });
+
+    const submitted = await this.options.hooks?.userPromptSubmit(prompt, signal);
+    if (submitted) {
+      yield hookEvent('UserPromptSubmit', submitted);
+      if (submitted.decision === 'deny') {
+        // The prompt is not appended at all. A blocked prompt that still entered
+        // history would come back on the next request as something the user
+        // asked for and the agent ignored.
+        yield { type: 'turn_end', reason: 'stop' };
+        return;
+      }
+    }
+
+    const context = submitted?.context ?? [];
+    await this.append({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: context.length
+            ? `${prompt}\n\n<hook-context>\n${context.join('\n\n')}\n</hook-context>`
+            : prompt,
+        },
+      ],
+    });
 
     const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_STEPS;
     const modelName = `${this.options.model.provider.id}/${this.options.model.model.id}`;
@@ -325,6 +357,26 @@ export class Agent {
       if (calls.length === 0) {
         const check = await this.selfCheck(signal);
         if (!check) {
+          const stop = await this.options.hooks?.stop(signal);
+          if (stop) {
+            yield hookEvent('Stop', stop);
+            if (stop.decision === 'deny') {
+              await this.append({
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text:
+                      `<hook>\nA Stop hook asked you to keep going: ${
+                        stop.reason ?? 'no reason given'
+                      }\nThis message is from the harness, not the user. If you believe the ` +
+                      `work is finished, say so and stop.\n</hook>`,
+                  },
+                ],
+              });
+              continue;
+            }
+          }
           yield { type: 'turn_end', reason: 'stop' };
           return;
         }
@@ -441,6 +493,18 @@ export class Agent {
     }
 
     const ctx = this.context(signal);
+
+    // Hooks run before the gate, and can only make the answer stricter: a deny
+    // stops the call, an ask turns an allow into a prompt, and an approve is
+    // read, reported and ignored.
+    const before = await this.options.hooks?.preToolUse(call.toolName, input, signal);
+    if (before) {
+      this.pending.push(hookEvent('PreToolUse', before));
+      if (before.decision === 'deny') {
+        return errorPart(call, before.reason ?? `a PreToolUse hook blocked ${call.toolName}`);
+      }
+    }
+
     let request: PermissionRequest | undefined;
     try {
       request = tool.permission?.(input, ctx);
@@ -450,13 +514,30 @@ export class Agent {
       return errorPart(call, (error as Error).message);
     }
 
-    const decision = decide(tool, request, {
+    let decision = decide(tool, request, {
       mode: this.mode,
       rules: this.rules,
       cwd: this.options.cwd,
     });
 
     if (decision.outcome === 'deny') return errorPart(call, decision.reason);
+
+    // A hook asking for confirmation is honoured even for a read-only tool, which
+    // has no PermissionRequest of its own; one is built from the call so the
+    // prompt still shows what is actually about to happen.
+    if (before?.decision === 'ask' && decision.outcome === 'allow') {
+      const asked = request ?? {
+        tool: call.toolName,
+        target: call.toolName,
+        title: call.toolName,
+        detail: `${call.toolName}(${JSON.stringify(call.input, null, 2)})`,
+      };
+      decision = {
+        outcome: 'ask',
+        reason: before.reason ?? 'a PreToolUse hook asked for confirmation',
+        request: asked,
+      };
+    }
 
     if (decision.outcome === 'ask') {
       const prompt = this.promptFn;
@@ -504,11 +585,18 @@ export class Agent {
 
     try {
       const result = await tool.execute(input, ctx);
+      const after = await this.options.hooks?.postToolUse(
+        call.toolName,
+        input,
+        result.output,
+        signal,
+      );
+      if (after) this.pending.push(hookEvent('PostToolUse', after));
       return {
         type: 'tool_result',
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        output: result.output,
+        output: withHookContext(result.output, after?.context ?? []),
         ...(result.isError ? { isError: true } : {}),
       };
     } catch (error) {
@@ -732,6 +820,35 @@ export class Agent {
     this.history.push(message);
     await this.options.onMessage?.(message);
   }
+}
+
+function hookEvent(event: HookEvent, outcome: HookOutcome): AgentEvent {
+  return {
+    type: 'hook',
+    event,
+    ...(outcome.decision === 'deny' && outcome.reason ? { blocked: outcome.reason } : {}),
+    problems: outcome.problems,
+  };
+}
+
+/**
+ * A PostToolUse hook's output, attached to the result the model reads. Appended
+ * rather than substituted: the tool's own output is what actually happened, and
+ * a hook commenting on it must not be able to replace it.
+ */
+function withHookContext(output: ToolResultOutput, context: string[]): ToolResultOutput {
+  if (context.length === 0) return output;
+  const note = `<hook-context>\n${context.join('\n\n')}\n</hook-context>`;
+  if (output.type === 'text') return { type: 'text', value: `${output.value}\n\n${note}` };
+  return {
+    type: 'content',
+    value: [
+      ...(output.type === 'content'
+        ? output.value
+        : [{ type: 'text' as const, text: JSON.stringify(output.value) }]),
+      { type: 'text', text: note },
+    ],
+  };
 }
 
 function errorPart(call: ToolCallPart, message: string): ToolResultPart {
