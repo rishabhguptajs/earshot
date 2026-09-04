@@ -1,4 +1,5 @@
 import type { ToolDefinition, ToolResultOutput } from '@earshot/providers';
+import type { ScopeContract } from '../scope/contract.ts';
 import type { BackgroundJobs } from './jobs.ts';
 
 /**
@@ -29,6 +30,8 @@ export interface ToolContext {
   todos: TodoStore;
   /** Session-scoped background processes started by `bash`. */
   jobs: BackgroundJobs;
+  /** What the agent declared it would change, and the guard that holds it to it. */
+  scope: ScopeContract;
   /** Records that a file was read, so `edit`/`write` can require a prior read. */
   markRead(path: string): void;
   hasRead(path: string): boolean;

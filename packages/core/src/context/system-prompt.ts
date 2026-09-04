@@ -1,4 +1,5 @@
 import { platform } from 'node:os';
+import { loadMemories, renderMemories } from '../memory/store.ts';
 import type { PermissionMode } from '../permissions/engine.ts';
 import { loadMemoryFiles, renderMemory } from './agents-md.ts';
 
@@ -9,6 +10,8 @@ export interface SystemPromptOptions {
   model: string;
   /** Rendered instead of being read from disk, in tests. */
   memory?: string;
+  /** Rendered instead of being read from disk, in tests. */
+  preferences?: string;
   extra?: string;
 }
 
@@ -23,6 +26,12 @@ Do the task the user asked for. Not a larger one, not a smaller one. If you spot
 something else worth fixing, say so in a sentence and leave it alone unless they
 ask - an unrequested refactor buried in a bug fix is a change the user did not
 review.
+
+Before your first change of a task, call declare_scope: the files you expect to
+touch, one paragraph on what changes and what does not, and a rough size. It is
+not paperwork - editing a file you did not list, adding a dependency, renaming or
+deleting files, reformatting, removing a test, or a change several times your own
+estimate will stop and ask the user before it happens.
 
 Ask rather than guess when the answer would change what you build. Use the
 ask_user tool for that. Do not use it for choices with an obvious default, or for
@@ -45,12 +54,18 @@ is the single most expensive thing you can do here.`;
 
 export async function buildSystemPrompt(options: SystemPromptOptions): Promise<string> {
   const memory = options.memory ?? renderMemory(await loadMemoryFiles(options.cwd), options.cwd);
+  // Assembled here alongside AGENTS.md rather than merged into it: the two are
+  // different things and are labelled as such. AGENTS.md is written by hand and
+  // committed; a preference is captured from something the user said, carries
+  // its provenance, and is deleted with one command.
+  const preferences = options.preferences ?? renderMemories(await loadMemories(options.cwd));
 
   const sections = [
     BASE,
     modeSection(options.mode),
     `<environment>\nWorking directory: ${options.cwd}\nPlatform: ${platform()}\nModel: ${options.model}\n</environment>`,
     memory,
+    preferences,
     options.extra ?? '',
   ];
   return sections.filter((section) => section.trim() !== '').join('\n\n');

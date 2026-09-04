@@ -1,6 +1,7 @@
 import type { ToolDefinition } from '@earshot/providers';
 import { askUserTool } from './ask-user.ts';
 import { bashOutputTool, bashTool } from './bash.ts';
+import { declareScopeTool } from './declare-scope.ts';
 import { editTool, multiEditTool } from './edit.ts';
 import { globTool } from './glob.ts';
 import { grepTool } from './grep.ts';
@@ -41,6 +42,7 @@ export const BUILTIN_TOOLS: Tool<never>[] = [
   webFetchTool,
   askUserTool,
   todoTool,
+  declareScopeTool,
 ] as unknown as Tool<never>[];
 
 export class ToolRegistry {
