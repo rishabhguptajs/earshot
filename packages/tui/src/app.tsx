@@ -166,6 +166,23 @@ export function App({ session, model, initialPrompt }: AppProps) {
                 ...(event.result.exitCode === 0 ? {} : { isError: true }),
               });
               break;
+            case 'hook':
+              // A hook that blocked something is the reason the agent did not do
+              // it, so it is said out loud rather than left for the model to
+              // paraphrase. Problems are shown too: a hook that failed silently
+              // is one the user goes on believing is protecting them.
+              if (event.blocked) {
+                push({
+                  kind: 'notice',
+                  id: nextId(),
+                  text: `${event.event} hook blocked this: ${event.blocked}`,
+                  color: theme.warning,
+                });
+              }
+              for (const problem of event.problems) {
+                push({ kind: 'notice', id: nextId(), text: problem, color: theme.warning });
+              }
+              break;
             case 'compacted':
               setCompacted((count) => count + event.replaced);
               push({

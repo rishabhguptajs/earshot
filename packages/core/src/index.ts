@@ -1,5 +1,6 @@
 export * from './agent.ts';
 export * from './context/index.ts';
+export * from './hooks/index.ts';
 export * from './memory/index.ts';
 export * from './model.ts';
 export * from './permissions/index.ts';

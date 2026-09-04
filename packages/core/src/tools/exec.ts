@@ -15,6 +15,8 @@ export interface ExecOptions {
   signal?: AbortSignal;
   /** Output beyond this is truncated; a runaway command must not eat the window. */
   maxBytes?: number;
+  /** Written to the child's stdin and closed. Absent means stdin is /dev/null. */
+  stdin?: string;
 }
 
 export const DEFAULT_MAX_OUTPUT_BYTES = 60_000;
@@ -30,8 +32,15 @@ export function exec(file: string, args: string[], options: ExecOptions): Promis
     const child = spawn(file, args, {
       cwd: options.cwd,
       ...(options.env ? { env: options.env } : {}),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
+
+    if (options.stdin !== undefined) {
+      // A child that never reads stdin makes this write fail with EPIPE, which
+      // is its choice to make and not an error worth failing the call over.
+      child.stdin?.on('error', () => {});
+      child.stdin?.end(options.stdin);
+    }
 
     let stdout = '';
     let stderr = '';
