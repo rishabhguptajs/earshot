@@ -109,6 +109,12 @@ export class Agent {
   private rules: Rule[];
   private mode: PermissionMode;
   private totalCostUsd = 0;
+  /**
+   * Mutable so a memory captured mid-session applies from the next call rather
+   * than from the next session - a preference the user has to restart to see
+   * honoured reads as one that was ignored.
+   */
+  private systemPrompt: string;
   /** Pre-change hashes for the batch currently executing. */
   private batchSnapshot: SnapshotFile[] = [];
   /** Events raised while a call ran, drained by the batch loop that owns it. */
@@ -136,6 +142,7 @@ export class Agent {
     this.mode = options.mode;
     this.promptFn = options.prompt;
     this.askFn = options.ask;
+    this.systemPrompt = options.system;
   }
 
   /** Replaces the approval callback. Passing undefined turns every ask into a denial. */
@@ -145,6 +152,18 @@ export class Agent {
 
   setAsk(ask: ((question: string, options?: string[]) => Promise<string>) | undefined): void {
     this.askFn = ask;
+  }
+
+  get cwd(): string {
+    return this.options.cwd;
+  }
+
+  get system(): string {
+    return this.systemPrompt;
+  }
+
+  setSystem(system: string): void {
+    this.systemPrompt = system;
   }
 
   get permissionMode(): PermissionMode {
@@ -211,7 +230,7 @@ export class Agent {
 
       for await (const event of this.prepareRequest(signal)) yield event;
       const messages = this.requestMessages();
-      this.lastRequestTokens = estimateTokens(messages, this.options.system);
+      this.lastRequestTokens = estimateTokens(messages, this.systemPrompt);
 
       yield { type: 'model_start', model: modelName };
 
@@ -219,7 +238,7 @@ export class Agent {
       let failed: EarshotError | undefined;
 
       for await (const event of streamModel(this.options.registry, this.options.model, {
-        system: this.options.system,
+        system: this.systemPrompt,
         messages,
         tools: this.tools.definitions(),
         abortSignal: signal,
@@ -510,11 +529,11 @@ export class Agent {
     const window = this.options.model.model.contextWindow ?? 0;
     const policy = { threshold: 0.8, keepRecentMessages: 8, ...this.options.compaction };
     const shaped = this.requestMessages();
-    if (!shouldCompact(shaped, this.options.system, window, policy)) return;
+    if (!shouldCompact(shaped, this.systemPrompt, window, policy)) return;
 
     const result = await compact({
       messages: shaped,
-      system: this.options.system,
+      system: this.systemPrompt,
       contextWindow: window,
       policy,
       todos: this.todos
@@ -531,7 +550,7 @@ export class Agent {
     const offset = this.compactionPreamble ? 1 : 0;
     this.compactedAt += Math.max(0, result.replaced - offset);
     this.compactionPreamble = result.messages[0];
-    this.lastRequestTokens = estimateTokens(this.requestMessages(), this.options.system);
+    this.lastRequestTokens = estimateTokens(this.requestMessages(), this.systemPrompt);
     // The cut is reported as a history index, not as a count of shaped
     // messages: the session layer maps it back to the entry ids the summary
     // stands in for, and those are indexed by history position.

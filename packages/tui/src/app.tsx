@@ -1,14 +1,25 @@
 import type {
   Agent,
   CreatedSession,
+  MemoryCandidate,
+  MemoryScope,
   PermissionMode,
   PermissionRequest,
   PromptChoice,
   TodoItem,
 } from '@earshot/core';
-import { isPermissionMode, PERMISSION_MODES } from '@earshot/core';
+import {
+  deleteMemory,
+  detectPreference,
+  isPermissionMode,
+  loadMemories,
+  PERMISSION_MODES,
+  refreshSystemPrompt,
+  saveMemory,
+} from '@earshot/core';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MemoryCapture } from './components/memory-capture.tsx';
 import { PermissionPrompt } from './components/permission.tsx';
 import { QuestionPrompt } from './components/question.tsx';
 import { StatusLine } from './components/status.tsx';
@@ -61,6 +72,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
   const [cost, setCost] = useState(0);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [queued, setQueued] = useState(0);
+  const [candidate, setCandidate] = useState<MemoryCandidate | undefined>();
 
   const [pending, setPending] = useState<
     | { request: PermissionRequest; reason: string; resolve: (choice: PromptChoice) => void }
@@ -190,9 +202,75 @@ export function App({ session, model, initialPrompt }: AppProps) {
     void runTurn(initialPrompt);
   }, [initialPrompt, runTurn]);
 
+  /**
+   * Lists what is remembered, with the sentence each rule came from. Memory the
+   * user cannot inspect is memory they cannot trust, so provenance is shown
+   * here rather than hidden in the file.
+   */
+  const showMemories = useCallback(
+    async (argument?: string) => {
+      const [verb, ...rest] = (argument ?? '').split(/\s+/);
+      const id = rest.join(' ').trim();
+      if (verb === 'forget' && id) {
+        const gone = await deleteMemory(id, agent.cwd);
+        if (gone) await refreshSystemPrompt(agent, model);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: gone ? `forgot ${id}` : `no memory called "${id}"`,
+          ...(gone ? {} : { color: theme.warning }),
+        });
+        return;
+      }
+
+      const memories = await loadMemories(agent.cwd);
+      if (memories.length === 0) {
+        push({ kind: 'notice', id: nextId(), text: 'nothing remembered yet' });
+        return;
+      }
+      const lines = memories.map((memory) => {
+        const when = memory.created.slice(0, 10);
+        const why = memory.source ? `\n     from "${memory.source}" on ${when}` : '';
+        return `  [${memory.id}] (${memory.scope}) ${memory.text}${why}`;
+      });
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `${lines.join('\n')}\n\n  /memory forget <id> removes one`,
+      });
+    },
+    [agent, model, push],
+  );
+
+  const remember = useCallback(
+    async (scope: MemoryScope) => {
+      if (!candidate) return;
+      setCandidate(undefined);
+      const saved = await saveMemory({ ...candidate, scope }, agent.cwd).catch(() => undefined);
+      if (!saved) {
+        push({ kind: 'notice', id: nextId(), text: 'could not save that', color: theme.warning });
+        return;
+      }
+      // Applied from the next model call, not the next session.
+      await refreshSystemPrompt(agent, model);
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `remembered [${saved.id}] (${scope}) - /memory to review or forget it`,
+      });
+    },
+    [agent, candidate, model, push],
+  );
+
   const handleCommand = useCallback(
     (command: string) => {
-      const [name, argument] = command.slice(1).split(/\s+/, 2);
+      // Split once, keeping the remainder: `split(/\s+/, 2)` discards everything
+      // after the second field, which silently drops the argument of any command
+      // that takes more than one word.
+      const body = command.slice(1).trim();
+      const space = body.search(/\s/);
+      const name = space === -1 ? body : body.slice(0, space);
+      const argument = space === -1 ? undefined : body.slice(space + 1).trim();
 
       if (name === 'exit' || name === 'quit') {
         exit();
@@ -213,6 +291,10 @@ export function App({ session, model, initialPrompt }: AppProps) {
         }
         return;
       }
+      if (name === 'memory') {
+        void showMemories(argument);
+        return;
+      }
       push({
         kind: 'notice',
         id: nextId(),
@@ -220,7 +302,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         color: theme.warning,
       });
     },
-    [agent, exit, push],
+    [agent, exit, push, showMemories],
   );
 
   const submit = useCallback(
@@ -233,6 +315,9 @@ export function App({ session, model, initialPrompt }: AppProps) {
         handleCommand(trimmed);
         return;
       }
+      // Offered, never stored: a wrong rule saved silently would follow the user
+      // into every future session with no sign of where it came from.
+      setCandidate(detectPreference(trimmed));
       if (busy) {
         // Steering, not queueing a second turn: the agent injects it at the next
         // model call so the user redirects without losing work in flight.
@@ -250,8 +335,16 @@ export function App({ session, model, initialPrompt }: AppProps) {
   const inputActive = !pending && !question;
 
   useInput(
-    (_, key) => {
-      if (key.escape && busy) controller.current?.abort();
+    (input_, key) => {
+      if (key.escape) {
+        setCandidate(undefined);
+        if (busy) controller.current?.abort();
+        return;
+      }
+      // Bound rather than modal: taking the offer must not stop the user typing.
+      if (key.ctrl && candidate && (input_ === 'r' || input_ === 'g')) {
+        void remember(input_ === 'r' ? 'project' : 'user');
+      }
     },
     { isActive: inputActive },
   );
@@ -288,6 +381,8 @@ export function App({ session, model, initialPrompt }: AppProps) {
           }}
         />
       )}
+
+      {candidate && inputActive && <MemoryCapture candidate={candidate} />}
 
       {inputActive && (
         <Box marginTop={1}>

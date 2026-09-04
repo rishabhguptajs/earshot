@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -305,6 +305,54 @@ describe('the permission prompt', () => {
       },
       { mode: 'ask', initialPrompt: 'write b.txt' },
     );
+  });
+});
+
+describe('remembering a preference', () => {
+  test('a correction is offered as a memory rather than stored silently', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, 'always use bun, not npm');
+      await waitFor(stdout, 'remember');
+      expect(stdout.output).toContain('ctrl+r');
+    });
+  });
+
+  test('an ordinary request offers nothing', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, 'add a retry to the fetch helper');
+      await settle(60);
+      expect(stdout.output).not.toContain('ctrl+r');
+    });
+  });
+
+  test('taking the offer writes the memory and says where to review it', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin, cwd }) => {
+      await type(stdin, 'always use bun, not npm');
+      await waitFor(stdout, 'remember');
+      stdin.send('\x12'); // ctrl+r
+      await waitFor(stdout, 'remembered');
+
+      const files = await readdir(join(cwd, '.earshot', 'memories'));
+      expect(files).toHaveLength(1);
+      expect(stdout.output).toContain('/memory');
+    });
+  });
+
+  test('/memory shows what the rule came from, and forgetting removes it', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin, cwd }) => {
+      await type(stdin, 'always use bun, not npm');
+      await waitFor(stdout, 'remember');
+      stdin.send('\x12');
+      await waitFor(stdout, 'remembered');
+
+      await type(stdin, '/memory');
+      await waitFor(stdout, 'always use bun, not npm');
+
+      const [file] = await readdir(join(cwd, '.earshot', 'memories'));
+      await type(stdin, `/memory forget ${(file ?? '').replace(/\.md$/, '')}`);
+      await waitFor(stdout, 'forgot');
+      expect(await readdir(join(cwd, '.earshot', 'memories'))).toHaveLength(0);
+    });
   });
 });
 

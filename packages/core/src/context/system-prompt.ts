@@ -1,4 +1,5 @@
 import { platform } from 'node:os';
+import { loadMemories, renderMemories } from '../memory/store.ts';
 import type { PermissionMode } from '../permissions/engine.ts';
 import { loadMemoryFiles, renderMemory } from './agents-md.ts';
 
@@ -9,6 +10,8 @@ export interface SystemPromptOptions {
   model: string;
   /** Rendered instead of being read from disk, in tests. */
   memory?: string;
+  /** Rendered instead of being read from disk, in tests. */
+  preferences?: string;
   extra?: string;
 }
 
@@ -51,12 +54,18 @@ is the single most expensive thing you can do here.`;
 
 export async function buildSystemPrompt(options: SystemPromptOptions): Promise<string> {
   const memory = options.memory ?? renderMemory(await loadMemoryFiles(options.cwd), options.cwd);
+  // Assembled here alongside AGENTS.md rather than merged into it: the two are
+  // different things and are labelled as such. AGENTS.md is written by hand and
+  // committed; a preference is captured from something the user said, carries
+  // its provenance, and is deleted with one command.
+  const preferences = options.preferences ?? renderMemories(await loadMemories(options.cwd));
 
   const sections = [
     BASE,
     modeSection(options.mode),
     `<environment>\nWorking directory: ${options.cwd}\nPlatform: ${platform()}\nModel: ${options.model}\n</environment>`,
     memory,
+    preferences,
     options.extra ?? '',
   ];
   return sections.filter((section) => section.trim() !== '').join('\n\n');

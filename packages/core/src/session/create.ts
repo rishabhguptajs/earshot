@@ -134,6 +134,16 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   };
 }
 
+/**
+ * Rebuilds the system prompt from what is currently on disk.
+ *
+ * Called after a memory is captured or deleted, so a preference takes effect on
+ * the next model call rather than the next session.
+ */
+export async function refreshSystemPrompt(agent: Agent, model: string): Promise<void> {
+  agent.setSystem(await buildSystemPrompt({ cwd: agent.cwd, mode: agent.permissionMode, model }));
+}
+
 async function resolveResumePath(options: CreateSessionOptions): Promise<string | undefined> {
   const { resume } = options;
   if (!resume) return undefined;
