@@ -4,6 +4,8 @@ import { buildSystemPrompt } from '../context/system-prompt.ts';
 import { resolveModel } from '../model.ts';
 import type { PermissionMode, PermissionPrompt } from '../permissions/engine.ts';
 import { loadSettings } from '../permissions/settings.ts';
+import { BUILTIN_TOOLS } from '../tools/index.ts';
+import type { Tool } from '../tools/types.ts';
 import { ShadowGit } from '../undo/shadow-git.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -31,6 +33,17 @@ export interface CreateSessionOptions {
   /** Disables undo snapshots. */
   noUndo?: boolean;
   maxSteps?: number;
+  /**
+   * Tools contributed from outside core - MCP servers today, subagents next.
+   * They are appended to the built-ins and go through the same gate: core knows
+   * nothing about where they came from, which is what keeps `packages/mcp`
+   * depending on core rather than the other way round.
+   */
+  extraTools?: Tool<never>[];
+  /** Additional problems to surface before the first turn, e.g. a server that failed. */
+  problems?: string[];
+  /** Torn down with the session, so a spawned server does not outlive it. */
+  onDispose?: () => Promise<void> | void;
 }
 
 export interface CreatedSession {
@@ -118,6 +131,9 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(options.prompt ? { prompt: options.prompt } : {}),
     ...(options.ask ? { ask: options.ask } : {}),
     ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
+    ...(options.extraTools?.length
+      ? { tools: [...(BUILTIN_TOOLS as Tool<never>[]), ...options.extraTools] }
+      : {}),
     ...(shadow ? { shadow } : {}),
     ...(store ? { onMessage: (message) => void store?.appendMessage(message) } : {}),
     ...(store
@@ -153,7 +169,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   return {
     agent,
     ...(store ? { store } : {}),
-    problems: settings.problems,
+    problems: [...settings.problems, ...(options.problems ?? [])],
     resumed: replayed.length,
     installPrompt: (prompt) => agent.setPrompt(prompt),
     installAsk: (ask) => agent.setAsk(ask),
@@ -202,6 +218,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     async dispose() {
       agent.dispose();
       await store?.flush();
+      await options.onDispose?.();
     },
   };
 }

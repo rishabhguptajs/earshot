@@ -8,6 +8,7 @@ import {
 } from '@earshot/core';
 import { runTui } from '@earshot/tui';
 import type { ParsedArgs } from '../args.ts';
+import { startExtensions } from '../extensions.ts';
 
 const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
@@ -43,9 +44,14 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
   // running, which is how most sessions actually begin.
   const initialPrompt = args.positionals.join(' ').trim();
 
+  const extensions = await startExtensions(process.cwd());
+
   try {
     const session = await createSession({
       cwd: process.cwd(),
+      extraTools: extensions.tools,
+      problems: extensions.problems,
+      onDispose: () => extensions.close(),
       model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
       ...(mode ? { mode } : {}),
       ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
@@ -58,6 +64,9 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
       ...(initialPrompt !== '' ? { initialPrompt } : {}),
     });
   } catch (error) {
+    // The session never reached dispose(), so anything already spawned is ours
+    // to clean up here or it outlives the process that started it.
+    await extensions.close();
     if (error instanceof UnknownModelError) {
       process.stderr.write(`${error.message}\n\nrun \`earshot models\` to see what is available\n`);
       return 2;
