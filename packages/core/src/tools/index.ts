@@ -7,6 +7,7 @@ import { globTool } from './glob.ts';
 import { grepTool } from './grep.ts';
 import { lsTool } from './ls.ts';
 import { readTool } from './read.ts';
+import { taskTool } from './task.ts';
 import { todoTool } from './todo.ts';
 import type { Tool } from './types.ts';
 import { webFetchTool } from './web-fetch.ts';
@@ -21,6 +22,7 @@ export * from './jobs.ts';
 export * from './schema.ts';
 export * from './shell.ts';
 export { skillTool } from './skill.ts';
+export * from './task.ts';
 export * from './todo.ts';
 export * from './types.ts';
 export * from './walk.ts';
@@ -44,6 +46,7 @@ export const BUILTIN_TOOLS: Tool<never>[] = [
   askUserTool,
   todoTool,
   declareScopeTool,
+  taskTool,
 ] as unknown as Tool<never>[];
 
 export class ToolRegistry {

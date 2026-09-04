@@ -166,6 +166,15 @@ export function App({ session, model, initialPrompt }: AppProps) {
                 ...(event.result.exitCode === 0 ? {} : { isError: true }),
               });
               break;
+            case 'subagent':
+              push({
+                kind: 'notice',
+                id: nextId(),
+                text: `subagent "${event.description}": ${event.steps} step${
+                  event.steps === 1 ? '' : 's'
+                }, $${event.costUsd.toFixed(4)}`,
+              });
+              break;
             case 'hook':
               // A hook that blocked something is the reason the agent did not do
               // it, so it is said out loud rather than left for the model to
