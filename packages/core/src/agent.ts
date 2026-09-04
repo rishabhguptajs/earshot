@@ -26,6 +26,7 @@ import {
 } from './permissions/engine.ts';
 import type { Rule } from './permissions/rules.ts';
 import { persistRule } from './permissions/settings.ts';
+import { type ScopeConcern, ScopeContract, type ScopeOptions } from './scope/index.ts';
 import { BUILTIN_TOOLS, ToolRegistry } from './tools/index.ts';
 import { BackgroundJobs } from './tools/jobs.ts';
 import { MemoryTodoStore } from './tools/todo.ts';
@@ -49,6 +50,7 @@ export type AgentEvent =
   | { type: 'permission'; request: PermissionRequest; reason: string }
   | { type: 'usage'; usage: Usage; costUsd: number }
   | { type: 'compacted'; replaced: number; summary: string }
+  | { type: 'scope_concern'; concern: ScopeConcern; accepted: boolean }
   | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' }
   | { type: 'error'; error: EarshotError };
 
@@ -79,6 +81,8 @@ export interface AgentOptions {
    * `summary` entry. The entry records what was summarised; it removes nothing.
    */
   onCompaction?: (summary: string, historyCut: number) => void | Promise<void>;
+  /** Overrides for the scope guard. */
+  scope?: Partial<ScopeOptions>;
 }
 
 const DEFAULT_MAX_STEPS = 100;
@@ -95,6 +99,7 @@ const DEFAULT_MAX_STEPS = 100;
 export class Agent {
   readonly history: Message[] = [];
   readonly todos = new MemoryTodoStore();
+  readonly scope: ScopeContract;
   readonly jobs = new BackgroundJobs();
 
   private readonly tools: ToolRegistry;
@@ -106,6 +111,8 @@ export class Agent {
   private totalCostUsd = 0;
   /** Pre-change hashes for the batch currently executing. */
   private batchSnapshot: SnapshotFile[] = [];
+  /** Events raised while a call ran, drained by the batch loop that owns it. */
+  private readonly pending: AgentEvent[] = [];
   /**
    * Where the live request starts, and what stands in for everything before it.
    * Compaction cannot shorten `history` - that would rewrite the past - so it
@@ -124,6 +131,7 @@ export class Agent {
 
   constructor(private readonly options: AgentOptions) {
     this.tools = new ToolRegistry(options.tools ?? (BUILTIN_TOOLS as Tool<never>[]));
+    this.scope = new ScopeContract(options.cwd, options.scope ?? {});
     this.rules = [...options.rules];
     this.mode = options.mode;
     this.promptFn = options.prompt;
@@ -180,6 +188,9 @@ export class Agent {
   }
 
   async *runTurn(prompt: string, signal: AbortSignal): AsyncGenerator<AgentEvent> {
+    // The budget is per turn; the declaration outlives one, because a follow-up
+    // like "now do the same for the other file" is the same piece of work.
+    this.scope.beginTurn();
     await this.append({ role: 'user', content: [{ type: 'text', text: prompt }] });
 
     const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_STEPS;
@@ -306,6 +317,7 @@ export class Agent {
       yield { type: 'tool_start', call };
       const part = await this.runOne(tool, call, signal);
       slots[index] = part;
+      while (this.pending.length > 0) yield this.pending.shift() as AgentEvent;
       yield {
         type: 'tool_end',
         toolCallId: call.toolCallId,
@@ -317,6 +329,7 @@ export class Agent {
     for (const { index, promise } of parallel) {
       const part = await promise;
       slots[index] = part;
+      while (this.pending.length > 0) yield this.pending.shift() as AgentEvent;
       const call = calls[index] as ToolCallPart;
       yield {
         type: 'tool_end',
@@ -387,6 +400,23 @@ export class Agent {
       }
     }
 
+    if (request) {
+      const concern = this.scope.check(request);
+      if (concern) {
+        const accepted = await this.confirmScope(concern, request);
+        this.pending.push({ type: 'scope_concern', concern, accepted });
+        if (!accepted) {
+          return errorPart(
+            call,
+            `${concern.summary} The user did not approve going outside the declared scope. ` +
+              'Do the part that is in scope, and tell them what you left out and why.',
+          );
+        }
+      }
+      // Counted after approval, so the running total is what was actually done.
+      this.scope.record(request);
+    }
+
     // Hashed here, immediately before the change and after approval, so the
     // recorded contents are what was on disk when the tool ran.
     await this.captureWrites(request?.writes ?? []);
@@ -409,6 +439,35 @@ export class Agent {
           : `${call.toolName} failed: ${(error as Error).message}`;
       return errorPart(call, message);
     }
+  }
+
+  /**
+   * Asks before doing something the turn did not say it would do.
+   *
+   * The prompt carries the real diff or command, exactly as an ordinary
+   * permission prompt does - a scope prompt that summarised the change would
+   * hide the thing the user is being asked to judge. "Always" widens the scope
+   * for this session only; unlike a permission choice it persists no rule,
+   * because the next task will have a different scope.
+   */
+  private async confirmScope(concern: ScopeConcern, request: PermissionRequest): Promise<boolean> {
+    const prompt = this.promptFn;
+    if (!prompt) return false;
+    const choice = await prompt(
+      {
+        tool: 'Scope',
+        target: request.target,
+        title: `outside the declared scope: ${request.title}`,
+        detail: `${concern.summary}\n\n${request.detail}`,
+        ...(request.writes ? { writes: request.writes } : {}),
+      },
+      concern.summary,
+    );
+    if (choice.kind === 'deny') return false;
+    if (choice.kind === 'allow-always') {
+      this.scope.widen(concern, concern.kind === 'out-of-scope-file' ? concern.path : undefined);
+    }
+    return true;
   }
 
   /** Records pre-change contents for paths not already captured in this batch. */
@@ -506,6 +565,7 @@ export class Agent {
       signal,
       todos: this.todos,
       jobs: this.jobs,
+      scope: this.scope,
       env: this.options.env ?? process.env,
       ask: async (question, choices) => {
         const ask = this.askFn;
