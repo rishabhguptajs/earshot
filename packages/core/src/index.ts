@@ -5,6 +5,7 @@ export * from './model.ts';
 export * from './permissions/index.ts';
 export * from './scope/index.ts';
 export * from './session/index.ts';
+export * from './skills/index.ts';
 export * from './tools/index.ts';
 export * from './undo/index.ts';
 export * from './verify/index.ts';

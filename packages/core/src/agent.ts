@@ -3,6 +3,7 @@ import type {
   Message,
   ProviderRegistry,
   ToolCallPart,
+  ToolDefinition,
   ToolResultPart,
   Usage,
 } from '@earshot/providers';
@@ -27,6 +28,7 @@ import {
 import type { Rule } from './permissions/rules.ts';
 import { persistRule } from './permissions/settings.ts';
 import { type ScopeConcern, ScopeContract, type ScopeOptions } from './scope/index.ts';
+import { narrow } from './skills/discover.ts';
 import { BUILTIN_TOOLS, ToolRegistry } from './tools/index.ts';
 import { BackgroundJobs } from './tools/jobs.ts';
 import { MemoryTodoStore } from './tools/todo.ts';
@@ -145,6 +147,12 @@ export class Agent {
    */
   private promptFn: PermissionPrompt | undefined;
   private askFn: ((question: string, options?: string[]) => Promise<string>) | undefined;
+  /**
+   * Set by a skill that declares `allowed-tools`, and cleared at the start of
+   * every turn: a narrowing that outlived the task it was written for would
+   * silently remove tools from work the skill knows nothing about.
+   */
+  private toolRestriction: string[] | undefined;
 
   constructor(private readonly options: AgentOptions) {
     this.tools = new ToolRegistry(options.tools ?? (BUILTIN_TOOLS as Tool<never>[]));
@@ -237,6 +245,7 @@ export class Agent {
     // The budget is per turn; the declaration outlives one, because a follow-up
     // like "now do the same for the other file" is the same piece of work.
     this.scope.beginTurn();
+    this.toolRestriction = undefined;
     this.mutatedSinceCheck = false;
     this.checksThisTurn = 0;
     await this.append({ role: 'user', content: [{ type: 'text', text: prompt }] });
@@ -269,7 +278,7 @@ export class Agent {
       for await (const event of streamModel(this.options.registry, this.options.model, {
         system: this.systemPrompt,
         messages,
-        tools: this.tools.definitions(),
+        tools: this.offeredTools(),
         abortSignal: signal,
       })) {
         switch (event.type) {
@@ -341,6 +350,23 @@ export class Agent {
     }
 
     yield { type: 'turn_end', reason: 'max_steps' };
+  }
+
+  /**
+   * The tools this call offers the model. A skill's `allowed-tools` is applied
+   * as an intersection with what the session already has, never as a union, so a
+   * skill file cannot hand itself a tool the user's settings withheld.
+   */
+  private offeredTools(): ToolDefinition[] {
+    const all = this.tools.definitions();
+    if (!this.toolRestriction) return all;
+    const kept = new Set(
+      narrow(
+        all.map((tool) => tool.name),
+        this.toolRestriction,
+      ),
+    );
+    return all.filter((tool) => kept.has(tool.name));
   }
 
   /**
@@ -691,6 +717,9 @@ export class Agent {
           );
         }
         return ask(question, choices);
+      },
+      restrictTools: (names) => {
+        this.toolRestriction = names;
       },
       markRead: (path) => {
         this.readFiles.add(path);

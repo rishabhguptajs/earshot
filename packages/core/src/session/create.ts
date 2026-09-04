@@ -4,7 +4,14 @@ import { buildSystemPrompt } from '../context/system-prompt.ts';
 import { resolveModel } from '../model.ts';
 import type { PermissionMode, PermissionPrompt } from '../permissions/engine.ts';
 import { loadSettings } from '../permissions/settings.ts';
+import {
+  discoverExtensions,
+  renderSkillIndex,
+  type Skill,
+  type SlashCommand,
+} from '../skills/discover.ts';
 import { BUILTIN_TOOLS } from '../tools/index.ts';
+import { skillTool } from '../tools/skill.ts';
 import type { Tool } from '../tools/types.ts';
 import { ShadowGit } from '../undo/shadow-git.ts';
 import { VERSION } from '../version.ts';
@@ -44,6 +51,8 @@ export interface CreateSessionOptions {
   problems?: string[];
   /** Torn down with the session, so a spawned server does not outlive it. */
   onDispose?: () => Promise<void> | void;
+  /** Skips skill and slash-command discovery, for tests and one-shot runs. */
+  noExtensions?: boolean;
 }
 
 export interface CreatedSession {
@@ -53,6 +62,10 @@ export interface CreatedSession {
   problems: string[];
   /** Number of messages replayed from a resumed transcript. */
   resumed: number;
+  /** Discovered skills, for `/skills` and for explaining what is loaded. */
+  skills: Skill[];
+  /** User-defined slash commands, expanded into prompts by the TUI. */
+  commands: SlashCommand[];
   /** Installs the approval callback; the TUI can only build one after it mounts. */
   installPrompt(prompt: PermissionPrompt): void;
   installAsk(ask: (question: string, options?: string[]) => Promise<string>): void;
@@ -97,7 +110,16 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   });
   const modelRef = `${resolved.provider.id}/${resolved.model.id}`;
 
-  const system = await buildSystemPrompt({ cwd: options.cwd, mode, model: modelRef });
+  const discovered = options.noExtensions
+    ? { skills: [], commands: [], problems: [] }
+    : await discoverExtensions(options.cwd);
+
+  const system = await buildSystemPrompt({
+    cwd: options.cwd,
+    mode,
+    model: modelRef,
+    skills: renderSkillIndex(discovered.skills),
+  });
 
   let store: SessionStore | undefined;
   let replayed: ReturnType<typeof messagesOf> = [];
@@ -121,6 +143,14 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ? undefined
     : await ShadowGit.open(options.cwd).catch(() => undefined);
 
+  // The skill tool only exists when there is something to load: a tool whose
+  // every argument is invalid is one the model wastes a call discovering.
+  const sessionTools: Tool<never>[] = [
+    ...(BUILTIN_TOOLS as Tool<never>[]),
+    ...(discovered.skills.length ? [skillTool(discovered.skills) as unknown as Tool<never>] : []),
+    ...(options.extraTools ?? []),
+  ];
+
   const agentOptions: AgentOptions = {
     registry,
     model: resolved,
@@ -131,9 +161,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(options.prompt ? { prompt: options.prompt } : {}),
     ...(options.ask ? { ask: options.ask } : {}),
     ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
-    ...(options.extraTools?.length
-      ? { tools: [...(BUILTIN_TOOLS as Tool<never>[]), ...options.extraTools] }
-      : {}),
+    ...(sessionTools.length > BUILTIN_TOOLS.length ? { tools: sessionTools } : {}),
     ...(shadow ? { shadow } : {}),
     ...(store ? { onMessage: (message) => void store?.appendMessage(message) } : {}),
     ...(store
@@ -169,8 +197,10 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   return {
     agent,
     ...(store ? { store } : {}),
-    problems: [...settings.problems, ...(options.problems ?? [])],
+    problems: [...settings.problems, ...discovered.problems, ...(options.problems ?? [])],
     resumed: replayed.length,
+    skills: discovered.skills,
+    commands: discovered.commands,
     installPrompt: (prompt) => agent.setPrompt(prompt),
     installAsk: (ask) => agent.setAsk(ask),
     branch,
@@ -229,8 +259,22 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
  * Called after a memory is captured or deleted, so a preference takes effect on
  * the next model call rather than the next session.
  */
-export async function refreshSystemPrompt(agent: Agent, model: string): Promise<void> {
-  agent.setSystem(await buildSystemPrompt({ cwd: agent.cwd, mode: agent.permissionMode, model }));
+export async function refreshSystemPrompt(
+  agent: Agent,
+  model: string,
+  skills: Skill[] = [],
+): Promise<void> {
+  agent.setSystem(
+    await buildSystemPrompt({
+      cwd: agent.cwd,
+      mode: agent.permissionMode,
+      model,
+      // Rebuilt from the same list rather than re-discovered: a skill added mid
+      // session is not loaded until the next one, and a prompt that silently
+      // gained an entry would be harder to explain than one that did not.
+      skills: renderSkillIndex(skills),
+    }),
+  );
 }
 
 async function resolveResumePath(options: CreateSessionOptions): Promise<string | undefined> {

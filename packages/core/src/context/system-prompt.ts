@@ -12,6 +12,8 @@ export interface SystemPromptOptions {
   memory?: string;
   /** Rendered instead of being read from disk, in tests. */
   preferences?: string;
+  /** The skill index: what exists and what each is for, never the bodies. */
+  skills?: string;
   extra?: string;
 }
 
@@ -66,6 +68,7 @@ export async function buildSystemPrompt(options: SystemPromptOptions): Promise<s
     `<environment>\nWorking directory: ${options.cwd}\nPlatform: ${platform()}\nModel: ${options.model}\n</environment>`,
     memory,
     preferences,
+    options.skills ?? '',
     options.extra ?? '',
   ];
   return sections.filter((section) => section.trim() !== '').join('\n\n');

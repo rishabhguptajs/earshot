@@ -20,6 +20,7 @@ export * from './glob-match.ts';
 export * from './jobs.ts';
 export * from './schema.ts';
 export * from './shell.ts';
+export { skillTool } from './skill.ts';
 export * from './todo.ts';
 export * from './types.ts';
 export * from './walk.ts';

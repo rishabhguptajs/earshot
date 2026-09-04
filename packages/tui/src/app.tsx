@@ -11,6 +11,7 @@ import type {
 import {
   deleteMemory,
   detectPreference,
+  expandCommand,
   isPermissionMode,
   loadMemories,
   PERMISSION_MODES,
@@ -236,7 +237,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
       const id = rest.join(' ').trim();
       if (verb === 'forget' && id) {
         const gone = await deleteMemory(id, agent.cwd);
-        if (gone) await refreshSystemPrompt(agent, model);
+        if (gone) await refreshSystemPrompt(agent, model, session.skills);
         push({
           kind: 'notice',
           id: nextId(),
@@ -262,7 +263,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         text: `${lines.join('\n')}\n\n  /memory forget <id> removes one`,
       });
     },
-    [agent, model, push],
+    [agent, model, push, session.skills],
   );
 
   const remember = useCallback(
@@ -275,14 +276,14 @@ export function App({ session, model, initialPrompt }: AppProps) {
         return;
       }
       // Applied from the next model call, not the next session.
-      await refreshSystemPrompt(agent, model);
+      await refreshSystemPrompt(agent, model, session.skills);
       push({
         kind: 'notice',
         id: nextId(),
         text: `remembered [${saved.id}] (${scope}) - /memory to review or forget it`,
       });
     },
-    [agent, candidate, model, push],
+    [agent, candidate, model, push, session.skills],
   );
 
   /**
@@ -430,6 +431,40 @@ export function App({ session, model, initialPrompt }: AppProps) {
         void undoLast();
         return;
       }
+      if (name === 'skills') {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: describeExtensions(session),
+        });
+        return;
+      }
+
+      // A user-defined command is expanded into a prompt and run as one. It is
+      // not a second way to reach the tools: whatever the file asks for goes
+      // through the same turn, and the same gate, as anything typed by hand.
+      const custom = session.commands.find((entry) => entry.name === name);
+      if (custom) {
+        const prompt = expandCommand(custom, argument ?? '');
+        if (prompt.trim() === '') {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: `/${name} expanded to nothing`,
+            color: theme.warning,
+          });
+          return;
+        }
+        if (busy) {
+          agent.steer(prompt);
+          setQueued(agent.pendingSteers);
+          push({ kind: 'user', id: nextId(), text: command });
+          return;
+        }
+        void runTurn(prompt);
+        return;
+      }
+
       push({
         kind: 'notice',
         id: nextId(),
@@ -437,7 +472,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         color: theme.warning,
       });
     },
-    [agent, busy, exit, push, sessionTree, showMemories, undoLast],
+    [agent, busy, exit, push, runTurn, session, sessionTree, showMemories, undoLast],
   );
 
   const submit = useCallback(
@@ -576,4 +611,29 @@ function ScrollRow({ item }: { item: ScrollItem }) {
       <Text color={item.color ?? theme.muted}>{item.text}</Text>
     </Box>
   );
+}
+
+/**
+ * What `/skills` shows. Skills and commands are listed together because from the
+ * user's side they are the same question - what extra behaviour is loaded in
+ * this directory, and where did it come from.
+ */
+function describeExtensions(session: CreatedSession): string {
+  const lines: string[] = [];
+  if (session.skills.length > 0) {
+    lines.push('skills (the agent loads these itself when they fit):');
+    for (const skill of session.skills) {
+      lines.push(`  ${skill.name}  [${skill.scope}]  ${skill.description}`);
+    }
+  }
+  if (session.commands.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('commands you can type:');
+    for (const command of session.commands) {
+      lines.push(`  /${command.name}  [${command.scope}]  ${command.description}`);
+    }
+  }
+  return lines.length === 0
+    ? 'no skills or commands found in .earshot/skills, .earshot/commands or your config directory'
+    : lines.join('\n');
 }
