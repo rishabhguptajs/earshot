@@ -53,18 +53,41 @@ and fails with an install pointer when it is absent, rather than falling back to
 PowerShell. Two shell dialects would mean quoting, pipelines and permission-rule
 matching all differ by machine for the tool the agent uses most.
 
-**Not done in M2:** context shapers and auto-compaction (M3), `/fork` and
-`/rewind` commands — the transcript format supports them but no UI drives them
-yet — and a `/undo` command, though the snapshots it needs are being written.
+**Not done in M2:** context shapers and auto-compaction, `/fork`, `/rewind` and
+`/undo` — all landed in M3.
 
 **Caveat:** still not verified against a live API. Tests run the whole loop
 against a scripted provider.
 
-## M3 — Listening + context ⬜
+## M3 — Listening + context ✅
 
-The [twelve behaviours](listening.md), plus context shapers, auto-compaction at
-~80% of the window, the memory system with capture UI, and cost tracking in the
-status line.
+The milestone the project is named after.
+
+- Context shapers, run before every model call, cheapest first: individual tool
+  results capped head-and-tail, older results reduced to one-line stubs, and
+  auto-compaction at 80% of the window — a model-written summary plus the recent
+  messages verbatim, open todos and files touched. Nothing rewrites history:
+  the request is shaped, and compaction appends a `summary` entry naming the
+  entries it stands in for
+- Scope contract: `declare_scope` before the first change, and a guard that stops
+  and asks on a file nobody listed, a dependency, a rename or delete, a
+  formatting sweep, a removed test, or a turn several times its own estimate
+- Preference memory with provenance: files with frontmatter recording the user's
+  own words and the date, an index in every prompt, two-keystroke capture from a
+  correction typed at the prompt, `/memory` to review and forget
+- Honest completion and verification: a turn that changed files runs the
+  project's detected test command and puts its output in front of the model
+  verbatim, alongside a self-check comparing the request with what changed
+- Status line: context percentage and what compaction has dropped, beside spend
+- Session tree: `/tree`, `/rewind`, `/fork`, `/undo`
+
+**Not done in M3:** `/plan` (behaviour 3) and the intent line (behaviour 6),
+which move to M4 with the rest of the command surface. Curiosity levels and
+`--max-cost` are also still unimplemented.
+
+**Caveat:** still not verified against a live API, and the TUI has still never
+been driven by a human in a real terminal — only mounted against a fake stdout
+in tests.
 
 ## M4 — Extensibility ⬜
 
@@ -101,4 +124,5 @@ input, Anthropic server-side compaction, tool search for large MCP sets.
    anything, run a turn and report what breaks.
 2. **Adding providers** — [usually one line](adding-a-provider.md).
 3. **Windows testing.** CI covers it; real terminals are another matter.
-4. **M2 tools.** Self-contained, well-specified, easy to review.
+4. **Driving the TUI for real.** It is only ever exercised against a fake
+   terminal; a session in a real one is worth more than another test.

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -14,8 +14,19 @@ import {
   type ToolCallPart,
   type WireApi,
 } from '@earshot/providers';
-import { render } from 'ink';
-import { App } from '../src/app.tsx';
+
+/**
+ * Ink decides once, when its module is evaluated, whether it is running in CI -
+ * and in CI it writes only <Static> output, never the live region. Every
+ * assertion here reads the live region, so under CI the captured stdout stays
+ * empty and every test times out. Clearing the variables before Ink is loaded
+ * is why these imports are dynamic and why they must stay dynamic: a static
+ * import is hoisted above the deletions and the suppression comes back.
+ */
+delete process.env.CI;
+delete process.env.CONTINUOUS_INTEGRATION;
+const { render } = await import('ink');
+const { App } = await import('../src/app.tsx');
 
 /**
  * Ink writes to whatever stdout it is handed. These fakes stand in for a
@@ -119,6 +130,9 @@ function scriptedRegistry(turns: Turn[]) {
   };
 }
 
+/** Entry ids the app asked to rewind to, so a test can assert it was reached. */
+const rewound: string[] = [];
+
 function sessionFor(turns: Turn[], cwd: string, mode: 'auto' | 'ask' = 'auto'): CreatedSession {
   const { registry, resolved } = scriptedRegistry(turns);
   const agent = new Agent({ registry, model: resolved, cwd, system: '', mode, rules: [] });
@@ -128,6 +142,22 @@ function sessionFor(turns: Turn[], cwd: string, mode: 'auto' | 'ask' = 'auto'): 
     resumed: 0,
     installPrompt: (prompt) => agent.setPrompt(prompt),
     installAsk: (ask) => agent.setAsk(ask),
+    // The session-tree commands are wired to these; the storage layer has its
+    // own tests, so what is under test here is that the commands reach them.
+    branch: async () =>
+      agent.history.map((message, index) => ({
+        type: 'message' as const,
+        id: `entry_${index}`,
+        parentId: index === 0 ? null : `entry_${index - 1}`,
+        timestamp: new Date().toISOString(),
+        message,
+      })),
+    rewindTo: async (entryId: string) => {
+      rewound.push(entryId);
+      return 1;
+    },
+    fork: async () => 'forked-session',
+    undo: async () => ({ label: 'write', restored: ['a.txt'], wasCreated: [] }),
     async dispose() {
       agent.dispose();
     },
@@ -208,24 +238,22 @@ async function withApp(
   }
 }
 
-/**
- * These mount a real Ink app and read what it draws.
- *
- * They do not run on CI yet, and the reason is not understood: on all three
- * GitHub runners the captured stdout stays empty, while the same tests pass
- * locally - including with CI=true and GITHUB_ACTIONS=true set, so Ink's own
- * is-in-ci check is ruled out. Skipping is a placeholder, not a conclusion:
- * these cover the permission prompt and ask_user, which are worth having
- * covered everywhere, so this should be diagnosed rather than left.
- */
-const describeLocal = process.env.CI ? describe.skip : describe;
-
-describeLocal('the app renders', () => {
+describe('the app renders', () => {
   test('mounts and shows the status line', async () => {
     await withApp([{ text: 'hi' }], async ({ stdout }) => {
       await waitFor(stdout, 'test/scripted');
       expect(stdout.output).toContain('auto');
     });
+  });
+
+  test('the status line shows how much of the context window is in use', async () => {
+    await withApp(
+      [{ text: 'hi' }],
+      async ({ stdout }) => {
+        await waitFor(stdout, '% ctx');
+      },
+      { initialPrompt: 'hello' },
+    );
   });
 
   test('an initial prompt runs a turn and its answer reaches the screen', async () => {
@@ -272,7 +300,7 @@ describeLocal('the app renders', () => {
   });
 });
 
-describeLocal('the permission prompt', () => {
+describe('the permission prompt', () => {
   test('appears with the real diff when a write needs approval', async () => {
     await withApp(
       [
@@ -309,7 +337,102 @@ describeLocal('the permission prompt', () => {
   });
 });
 
-describeLocal('ask_user', () => {
+describe('the session tree', () => {
+  test('/tree lists the prompts of this session', async () => {
+    await withApp(
+      [{ text: 'answered' }],
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'answered');
+        await type(stdin, '/tree');
+        await waitFor(stdout, '1. the first thing');
+        expect(stdout.output).toContain('/rewind');
+      },
+      { initialPrompt: 'the first thing' },
+    );
+  });
+
+  test('/rewind goes back to the state before the chosen prompt', async () => {
+    rewound.length = 0;
+    await withApp(
+      [{ text: 'answered' }],
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'answered');
+        await type(stdin, '/rewind 1');
+        await waitFor(stdout, 'rewound to before prompt 1');
+        // Nothing is deleted; the user is told so, because that is what makes
+        // rewinding safe to do on a hunch.
+        expect(stdout.output).toContain('Nothing was deleted');
+        expect(rewound).toHaveLength(1);
+      },
+      { initialPrompt: 'the first thing' },
+    );
+  });
+
+  test('/rewind with no such prompt says so instead of guessing', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/rewind 9');
+      await waitFor(stdout, 'no prompt 9');
+    });
+  });
+
+  test('/undo reports what it restored', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/undo');
+      await waitFor(stdout, 'undid write');
+      expect(stdout.output).toContain('a.txt');
+    });
+  });
+});
+
+describe('remembering a preference', () => {
+  test('a correction is offered as a memory rather than stored silently', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, 'always use bun, not npm');
+      await waitFor(stdout, 'remember');
+      expect(stdout.output).toContain('ctrl+r');
+    });
+  });
+
+  test('an ordinary request offers nothing', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, 'add a retry to the fetch helper');
+      await settle(60);
+      expect(stdout.output).not.toContain('ctrl+r');
+    });
+  });
+
+  test('taking the offer writes the memory and says where to review it', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin, cwd }) => {
+      await type(stdin, 'always use bun, not npm');
+      await waitFor(stdout, 'remember');
+      stdin.send('\x12'); // ctrl+r
+      await waitFor(stdout, 'remembered');
+
+      const files = await readdir(join(cwd, '.earshot', 'memories'));
+      expect(files).toHaveLength(1);
+      expect(stdout.output).toContain('/memory');
+    });
+  });
+
+  test('/memory shows what the rule came from, and forgetting removes it', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin, cwd }) => {
+      await type(stdin, 'always use bun, not npm');
+      await waitFor(stdout, 'remember');
+      stdin.send('\x12');
+      await waitFor(stdout, 'remembered');
+
+      await type(stdin, '/memory');
+      await waitFor(stdout, 'always use bun, not npm');
+
+      const [file] = await readdir(join(cwd, '.earshot', 'memories'));
+      await type(stdin, `/memory forget ${(file ?? '').replace(/\.md$/, '')}`);
+      await waitFor(stdout, 'forgot');
+      expect(await readdir(join(cwd, '.earshot', 'memories'))).toHaveLength(0);
+    });
+  });
+});
+
+describe('ask_user', () => {
   test('the question is shown and a typed answer is accepted', async () => {
     await withApp(
       [

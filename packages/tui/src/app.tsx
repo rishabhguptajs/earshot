@@ -1,14 +1,25 @@
 import type {
   Agent,
   CreatedSession,
+  MemoryCandidate,
+  MemoryScope,
   PermissionMode,
   PermissionRequest,
   PromptChoice,
   TodoItem,
 } from '@earshot/core';
-import { isPermissionMode, PERMISSION_MODES } from '@earshot/core';
+import {
+  deleteMemory,
+  detectPreference,
+  isPermissionMode,
+  loadMemories,
+  PERMISSION_MODES,
+  refreshSystemPrompt,
+  saveMemory,
+} from '@earshot/core';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MemoryCapture } from './components/memory-capture.tsx';
 import { PermissionPrompt } from './components/permission.tsx';
 import { QuestionPrompt } from './components/question.tsx';
 import { StatusLine } from './components/status.tsx';
@@ -61,6 +72,9 @@ export function App({ session, model, initialPrompt }: AppProps) {
   const [cost, setCost] = useState(0);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [queued, setQueued] = useState(0);
+  const [candidate, setCandidate] = useState<MemoryCandidate | undefined>();
+  const [context, setContext] = useState(() => agent.contextUse);
+  const [compacted, setCompacted] = useState(0);
 
   const [pending, setPending] = useState<
     | { request: PermissionRequest; reason: string; resolve: (choice: PromptChoice) => void }
@@ -137,6 +151,27 @@ export function App({ session, model, initialPrompt }: AppProps) {
             }
             case 'usage':
               setCost(agent.costUsd);
+              setContext(agent.contextUse);
+              break;
+            case 'verification':
+              // Shown to the user as it was shown to the model: the command, the
+              // exit code and the output, none of it summarised.
+              push({
+                kind: 'tool',
+                id: nextId(),
+                name: event.result.command,
+                title: `${event.result.command} - exit ${event.result.exitCode ?? 'killed'}`,
+                output: event.result.output,
+                ...(event.result.exitCode === 0 ? {} : { isError: true }),
+              });
+              break;
+            case 'compacted':
+              setCompacted((count) => count + event.replaced);
+              push({
+                kind: 'notice',
+                id: nextId(),
+                text: `compacted: ${event.replaced} earlier messages are now a summary`,
+              });
               break;
             case 'error':
               push({
@@ -190,9 +225,170 @@ export function App({ session, model, initialPrompt }: AppProps) {
     void runTurn(initialPrompt);
   }, [initialPrompt, runTurn]);
 
+  /**
+   * Lists what is remembered, with the sentence each rule came from. Memory the
+   * user cannot inspect is memory they cannot trust, so provenance is shown
+   * here rather than hidden in the file.
+   */
+  const showMemories = useCallback(
+    async (argument?: string) => {
+      const [verb, ...rest] = (argument ?? '').split(/\s+/);
+      const id = rest.join(' ').trim();
+      if (verb === 'forget' && id) {
+        const gone = await deleteMemory(id, agent.cwd);
+        if (gone) await refreshSystemPrompt(agent, model);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: gone ? `forgot ${id}` : `no memory called "${id}"`,
+          ...(gone ? {} : { color: theme.warning }),
+        });
+        return;
+      }
+
+      const memories = await loadMemories(agent.cwd);
+      if (memories.length === 0) {
+        push({ kind: 'notice', id: nextId(), text: 'nothing remembered yet' });
+        return;
+      }
+      const lines = memories.map((memory) => {
+        const when = memory.created.slice(0, 10);
+        const why = memory.source ? `\n     from "${memory.source}" on ${when}` : '';
+        return `  [${memory.id}] (${memory.scope}) ${memory.text}${why}`;
+      });
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `${lines.join('\n')}\n\n  /memory forget <id> removes one`,
+      });
+    },
+    [agent, model, push],
+  );
+
+  const remember = useCallback(
+    async (scope: MemoryScope) => {
+      if (!candidate) return;
+      setCandidate(undefined);
+      const saved = await saveMemory({ ...candidate, scope }, agent.cwd).catch(() => undefined);
+      if (!saved) {
+        push({ kind: 'notice', id: nextId(), text: 'could not save that', color: theme.warning });
+        return;
+      }
+      // Applied from the next model call, not the next session.
+      await refreshSystemPrompt(agent, model);
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `remembered [${saved.id}] (${scope}) - /memory to review or forget it`,
+      });
+    },
+    [agent, candidate, model, push],
+  );
+
+  /**
+   * `/tree`, `/rewind`, `/fork` and `/undo`.
+   *
+   * The numbering is over the user's own prompts rather than over every entry:
+   * "go back to before I asked for the refactor" is how people think about a
+   * session, and an entry id is not something anyone can pick out of a list.
+   */
+  const sessionTree = useCallback(
+    async (name: string, argument?: string) => {
+      const entries = await session.branch();
+      const prompts = entries.filter(
+        (entry) =>
+          entry.type === 'message' &&
+          entry.message.role === 'user' &&
+          entry.message.content.some(
+            (part) => part.type === 'text' && !part.text.startsWith('<self-check>'),
+          ),
+      );
+
+      if (name === 'tree' || !argument) {
+        if (prompts.length === 0) {
+          push({ kind: 'notice', id: nextId(), text: 'nothing in this session yet' });
+          return;
+        }
+        const lines = prompts.map((entry, index) => {
+          const text =
+            entry.type === 'message'
+              ? (entry.message.content.find((part) => part.type === 'text')?.text ?? '')
+              : '';
+          return `  ${index + 1}. ${text.split('\n')[0]?.slice(0, 70) ?? ''}`;
+        });
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `${lines.join('\n')}\n\n  /rewind <n> goes back to one · /fork <n> branches from it`,
+        });
+        return;
+      }
+
+      const index = Number.parseInt(argument, 10) - 1;
+      const target = prompts[index];
+      if (!target) {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `no prompt ${argument} in this session - /tree lists them`,
+          color: theme.warning,
+        });
+        return;
+      }
+      // The entry before the chosen prompt: rewinding "to" a prompt means the
+      // state the session was in when it was typed, not after it ran.
+      const previous = entries[entries.indexOf(target) - 1] ?? target;
+
+      if (name === 'rewind') {
+        const kept = await session.rewindTo(previous.id);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `rewound to before prompt ${index + 1}; ${kept} message${kept === 1 ? '' : 's'} kept. Nothing was deleted - the rest is still in the transcript as another branch.`,
+        });
+        return;
+      }
+
+      const forked = await session.fork(previous.id);
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: forked
+          ? `forked from prompt ${index + 1} into ${forked}; this session continues there and the original is untouched`
+          : 'could not fork this session',
+        ...(forked ? {} : { color: theme.warning }),
+      });
+    },
+    [push, session],
+  );
+
+  const undoLast = useCallback(async () => {
+    const result = await session.undo();
+    if (!result) {
+      push({ kind: 'notice', id: nextId(), text: 'nothing to undo', color: theme.warning });
+      return;
+    }
+    const created = result.wasCreated.length
+      ? ` Left in place because the batch created them: ${result.wasCreated.join(', ')}.`
+      : '';
+    push({
+      kind: 'notice',
+      id: nextId(),
+      text: result.restored.length
+        ? `undid ${result.label}: restored ${result.restored.join(', ')}.${created}`
+        : `nothing to restore from ${result.label}.${created}`,
+    });
+  }, [push, session]);
+
   const handleCommand = useCallback(
     (command: string) => {
-      const [name, argument] = command.slice(1).split(/\s+/, 2);
+      // Split once, keeping the remainder: `split(/\s+/, 2)` discards everything
+      // after the second field, which silently drops the argument of any command
+      // that takes more than one word.
+      const body = command.slice(1).trim();
+      const space = body.search(/\s/);
+      const name = space === -1 ? body : body.slice(0, space);
+      const argument = space === -1 ? undefined : body.slice(space + 1).trim();
 
       if (name === 'exit' || name === 'quit') {
         exit();
@@ -213,6 +409,27 @@ export function App({ session, model, initialPrompt }: AppProps) {
         }
         return;
       }
+      if (name === 'memory') {
+        void showMemories(argument);
+        return;
+      }
+      if (name === 'tree' || name === 'rewind' || name === 'fork') {
+        if (busy) {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: 'finish or interrupt the current turn first (esc)',
+            color: theme.warning,
+          });
+          return;
+        }
+        void sessionTree(name, argument);
+        return;
+      }
+      if (name === 'undo') {
+        void undoLast();
+        return;
+      }
       push({
         kind: 'notice',
         id: nextId(),
@@ -220,7 +437,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         color: theme.warning,
       });
     },
-    [agent, exit, push],
+    [agent, busy, exit, push, sessionTree, showMemories, undoLast],
   );
 
   const submit = useCallback(
@@ -233,6 +450,9 @@ export function App({ session, model, initialPrompt }: AppProps) {
         handleCommand(trimmed);
         return;
       }
+      // Offered, never stored: a wrong rule saved silently would follow the user
+      // into every future session with no sign of where it came from.
+      setCandidate(detectPreference(trimmed));
       if (busy) {
         // Steering, not queueing a second turn: the agent injects it at the next
         // model call so the user redirects without losing work in flight.
@@ -250,8 +470,16 @@ export function App({ session, model, initialPrompt }: AppProps) {
   const inputActive = !pending && !question;
 
   useInput(
-    (_, key) => {
-      if (key.escape && busy) controller.current?.abort();
+    (input_, key) => {
+      if (key.escape) {
+        setCandidate(undefined);
+        if (busy) controller.current?.abort();
+        return;
+      }
+      // Bound rather than modal: taking the offer must not stop the user typing.
+      if (key.ctrl && candidate && (input_ === 'r' || input_ === 'g')) {
+        void remember(input_ === 'r' ? 'project' : 'user');
+      }
     },
     { isActive: inputActive },
   );
@@ -289,6 +517,8 @@ export function App({ session, model, initialPrompt }: AppProps) {
         />
       )}
 
+      {candidate && inputActive && <MemoryCapture candidate={candidate} />}
+
       {inputActive && (
         <Box marginTop={1}>
           <Text color={theme.user}>{'> '}</Text>
@@ -308,6 +538,8 @@ export function App({ session, model, initialPrompt }: AppProps) {
         todos={todos}
         busy={busy}
         queued={queued}
+        context={context}
+        compacted={compacted}
       />
     </Box>
   );

@@ -1,8 +1,10 @@
 # Listening
 
-> **None of this is built yet.** This document specifies M3. It's written down
-> first because these behaviours are the reason earshot exists — everything else
-> is table stakes that three other tools already do well.
+> **Mostly built.** This document specified M3, which landed: behaviours 1, 2, 4,
+> 5, 7, 8, 10, 11 and 12 are implemented with tests, 9 follows from the provider
+> layer, and 3 (`/plan`) and 6 (the intent line) are still to come in M4. It's
+> written down first because these behaviours are the reason earshot exists —
+> everything else is table stakes that three other tools already do well.
 
 ## The problem
 
@@ -35,8 +37,17 @@ which files, which behaviours. Editing a file outside that scope triggers a
 confirmation prompt.
 
 Unrequested refactors, renames, new dependencies and formatting sweeps are blocked
-by default — by policy text *and* by a configurable diff-size guard, because
-policy text alone is not enforcement.
+by default — by policy text *and* by a guard, because policy text alone is not
+enforcement.
+
+The guard is deliberately not a line count. A threshold either fires on every
+large change the user actually asked for or never fires on the small wrong ones,
+so what it checks is categorical: a file outside the declared list, a dependency
+manifest or install command, a rename or delete, a rewrite that changes no line's
+content, a removed test. Size is only a backstop, floored so that a small change
+is never over budget whatever the estimate said. A turn that declared no scope is
+not guarded at all — a prompt on every one-line fix is the prompt fatigue this
+document lists as an anti-goal.
 
 ### 3. A plan you can edit
 
@@ -109,12 +120,13 @@ Prompt text alone doesn't produce behaviour; every item above lands as a mechani
 | Behaviour | Mechanism |
 |---|---|
 | Ask before guessing | `ask_user` tool + policy |
-| Scope contract | Diff-size guard, out-of-scope confirmation prompt |
+| Scope contract | `declare_scope`, a categorical out-of-scope check, a size backstop |
 | Steering | Message queue drained at the next model call |
 | Undo | Per-batch shadow git snapshots |
 | Memory | Files with frontmatter, index always in context |
-| Honest completion | `Stop` hook self-check |
+| Honest completion | End-of-turn self-check appended to the turn |
 | Verification | Detected test command, output reported verbatim |
+| Context | Result caps, stubs for older results, compaction at 80% |
 | Trust | Permission rules persisted per scope, deny-first |
 
 Each gets tests. "The agent asks instead of guessing" is a testable property given
