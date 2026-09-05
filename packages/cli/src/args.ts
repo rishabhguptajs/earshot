@@ -41,7 +41,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  const known = new Set(['auth', 'mcp', 'config', 'models', 'acp', 'doctor']);
+  const known = new Set(['auth', 'mcp', 'extensions', 'config', 'models', 'acp', 'doctor']);
   const command =
     positionals[0] !== undefined && known.has(positionals[0]) ? positionals[0] : undefined;
   return { command, flags, positionals: command ? positionals.slice(1) : positionals };

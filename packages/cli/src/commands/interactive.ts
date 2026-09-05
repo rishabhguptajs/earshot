@@ -8,7 +8,8 @@ import {
 } from '@earshot/core';
 import { runTui } from '@earshot/tui';
 import type { ParsedArgs } from '../args.ts';
-import { startExtensions } from '../extensions.ts';
+import { startExtensions } from '../extensions/index.ts';
+import { loadImage } from '../image.ts';
 
 const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
@@ -43,6 +44,15 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
   // A bare `earshot "do the thing"` starts the TUI with that first turn already
   // running, which is how most sessions actually begin.
   const initialPrompt = args.positionals.join(' ').trim();
+  let image: Awaited<ReturnType<typeof loadImage>> | undefined;
+  if (typeof flags.image === 'string') {
+    try {
+      image = await loadImage(flags.image, process.cwd());
+    } catch (error) {
+      process.stderr.write(`image: ${(error as Error).message}\n`);
+      return 2;
+    }
+  }
 
   const extensions = await startExtensions(process.cwd());
 
@@ -61,7 +71,13 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
     return await runTui({
       session,
       model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
-      ...(initialPrompt !== '' ? { initialPrompt } : {}),
+      ...(initialPrompt !== '' || image
+        ? {
+            initialPrompt: image
+              ? [...(initialPrompt ? [{ type: 'text' as const, text: initialPrompt }] : []), image]
+              : initialPrompt,
+          }
+        : {}),
     });
   } catch (error) {
     // The session never reached dispose(), so anything already spawned is ours

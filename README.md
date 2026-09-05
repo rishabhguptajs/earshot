@@ -105,9 +105,11 @@ earshot is built in milestones. Honest state of each:
 | **M3** Listening | Scope contract, compaction, memory | ✅ Done |
 | **M4** Extensibility | MCP, skills, commands, hooks, subagents | ✅ Done |
 | **M5** Ship | Docs site, npm, binaries, Windows QA | 🟨 Release acceptance |
+| **M6** v1.x | ACP, images, tool search, TypeScript extensions | ⬜ In progress |
 
 **Works today:** the interactive TUI and `earshot -p`, both running the full
-agent loop; the permission system (five modes, `Tool(pattern)` rules,
+agent loop; a tested stable ACP v1 server for editor clients; the permission
+system (five modes, `Tool(pattern)` rules,
 deny-first); the scope contract, preference memory, auto-compaction and
 end-of-turn verification; sessions with `--resume`, `--continue`, `/fork`,
 `/rewind` and `/undo`; MCP servers over stdio and HTTP; skills, user-defined
@@ -157,6 +159,7 @@ mid-session doesn't corrupt history. See [Architecture](docs/architecture.md).
 |---|---|
 | [Getting started](docs/getting-started.md) | Install, authenticate, first run |
 | [CLI reference](docs/cli.md) | Every command, flag and exit code |
+| [Editor integration](docs/acp.md) | ACP protocol surface and editor QA checklists |
 | [Providers](docs/providers.md) | All 19, how auth resolves, model catalog |
 | [Adding a provider](docs/adding-a-provider.md) | The one-line path, and the harder one |
 | [Architecture](docs/architecture.md) | Packages, the unified types, the bridge |

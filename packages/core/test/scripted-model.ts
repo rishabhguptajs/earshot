@@ -42,6 +42,7 @@ const MODEL: Model = {
 export function scripted(turns: ScriptedTurn[]): Scripted {
   const requests: ModelRequest[] = [];
   let next = 0;
+  const model: Model = { ...MODEL, capabilities: { ...MODEL.capabilities } };
 
   const wire: WireApi = {
     kind: 'openai-completions',
@@ -89,13 +90,13 @@ export function scripted(turns: ScriptedTurn[]): Scripted {
     name: 'Test',
     auth: { kind: 'none' },
     api: 'openai-completions',
-    models: () => [MODEL],
+    models: () => [model],
   };
 
   const registry = new ProviderRegistry().register(provider).registerWire(wire);
   return {
     registry,
-    model: { provider, model: MODEL, credentials: { type: 'ambient' } },
+    model: { provider, model, credentials: { type: 'ambient' } },
     requests,
   };
 }

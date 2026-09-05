@@ -8,6 +8,8 @@ earshot -p "<prompt>" [flags]     one headless turn
 earshot models [filter] [flags]   list the model catalog
 earshot auth <login|list|logout>  manage credentials
 earshot mcp <list|trust|untrust>  manage MCP servers
+earshot extensions <list|trust|untrust>  manage in-process extensions
+earshot acp [flags]               serve editor clients over ACP v1 on stdio
 earshot doctor                    diagnose the local setup
 ```
 
@@ -33,6 +35,7 @@ earshot -p "hello" --output-format json
 |---|---|---|
 | `--model <ref>` | any `earshot models` reference | `anthropic/claude-opus-5` |
 | `--output-format <fmt>` | `text`, `json`, `stream-json` | `text` |
+| `--image <path-or-url>` | PNG, JPEG, GIF or WebP path, or HTTPS URL | none |
 
 **Output formats**
 
@@ -45,6 +48,11 @@ Both JSON formats are a versioned contract; see [Headless output](headless.md)
 for the schema and what `earshot.v1` promises. `json@v1` pins it explicitly.
 
 `Ctrl-C` aborts the request; partial output is kept.
+
+`--image` attaches one image to the prompt. Local files are capped at 20 MB and
+encoded into the append-only transcript; HTTPS URLs stay references for the
+provider adapter. A model without the `vision` capability is rejected before a
+request is made. The same flag attaches to an initial interactive TUI prompt.
 
 ## `earshot auth`
 
@@ -68,6 +76,37 @@ earshot mcp untrust helper
 
 See [Extending earshot](extending.md#mcp-servers) for why a project-scope server
 needs trusting and a global one does not.
+
+Past 25 MCP tools, their schemas are no longer sent with every request. The
+model gets a `tool_search` tool and finds them by what it wants to do; a
+surfaced tool stays listed for the rest of the session and is gated exactly as a
+listed one is.
+
+## `earshot extensions`
+
+```bash
+earshot extensions list      # modules found; imports nothing untrusted
+earshot extensions trust jira
+earshot extensions untrust jira
+```
+
+In-process TypeScript or JavaScript modules that contribute tools, from
+`.earshot/extensions/` or the config directory. See [Extending
+earshot](extending.md#in-process-extensions) — an extension is not sandboxed, so
+a project one is inert until trusted.
+
+## `earshot acp`
+
+Runs the stable ACP v1 server used by Zed and other ACP-capable editors:
+
+```bash
+earshot acp --model anthropic/claude-opus-5
+```
+
+It is a stdio protocol command, not an interactive terminal command. The model,
+API key and permission-mode flags become defaults for sessions the editor opens.
+See [Editor integration with ACP](acp.md) for the supported protocol surface and
+the reproducible Zed, JetBrains and Neovim QA checklists.
 
 ## `earshot models`
 

@@ -9,7 +9,8 @@ import {
   UnknownModelError,
 } from '@earshot/core';
 import type { ParsedArgs } from '../args.ts';
-import { startExtensions } from '../extensions.ts';
+import { startExtensions } from '../extensions/index.ts';
+import { loadImage } from '../image.ts';
 import {
   type OutputFormat,
   parseFormat,
@@ -92,7 +93,21 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
   let failure: { kind: string; message: string } | undefined;
 
   try {
-    for await (const event of session.agent.runTurn(prompt, controller.signal)) {
+    let image: Awaited<ReturnType<typeof loadImage>> | undefined;
+    if (typeof flags.image === 'string') {
+      try {
+        image = await loadImage(flags.image, process.cwd());
+      } catch (error) {
+        process.stderr.write(`image: ${(error as Error).message}\n`);
+        exitCode = 2;
+        subtype = 'error';
+        failure = { kind: 'invalid_image', message: (error as Error).message };
+      }
+    }
+    const input = image ? [{ type: 'text' as const, text: prompt }, image] : prompt;
+    for await (const event of failure
+      ? ([] as AgentEvent[])
+      : session.agent.runTurn(input, controller.signal)) {
       emit(event);
       if (event.type === 'error') {
         exitCode = 1;

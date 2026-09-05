@@ -1,13 +1,19 @@
 import type {
   EarshotError,
+  ImagePart,
   Message,
   ProviderRegistry,
+  TextPart,
   ToolCallPart,
   ToolDefinition,
   ToolResultOutput,
   ToolResultPart,
   Usage,
 } from '@earshot/providers';
+
+export type UserPromptPart = TextPart | ImagePart;
+export type UserPrompt = string | UserPromptPart[];
+
 import {
   type CompactionPolicy,
   compact,
@@ -38,6 +44,7 @@ import { BUILTIN_TOOLS, ToolRegistry } from './tools/index.ts';
 import { BackgroundJobs } from './tools/jobs.ts';
 import { DEFAULT_SUBAGENT_TOOLS } from './tools/task.ts';
 import { MemoryTodoStore } from './tools/todo.ts';
+import { toolSearchTool } from './tools/tool-search.ts';
 import {
   type PermissionRequest,
   type SubagentRequest,
@@ -188,9 +195,26 @@ export class Agent {
    * silently remove tools from work the skill knows nothing about.
    */
   private toolRestriction: string[] | undefined;
+  /**
+   * Deferred tools `tool_search` has surfaced. Session-scoped rather than
+   * per-turn: a tool the model went looking for in one turn is exactly the tool
+   * the follow-up turn needs, and making it search again would be theatre.
+   */
+  private readonly surfacedTools = new Set<string>();
 
   constructor(private readonly options: AgentOptions) {
     this.tools = new ToolRegistry(options.tools ?? (BUILTIN_TOOLS as Tool<never>[]));
+    if (this.tools.list().some((tool) => tool.deferred)) {
+      this.tools.add(
+        toolSearchTool({
+          all: () => this.tools.list().filter((tool) => tool.deferred),
+          surface: (name) => {
+            this.surfacedTools.add(name);
+          },
+          surfaced: (name) => this.surfacedTools.has(name),
+        }) as unknown as Tool<never>,
+      );
+    }
     this.scope = options.scopeContract ?? new ScopeContract(options.cwd, options.scope ?? {});
     this.rules = [...options.rules];
     this.mode = options.mode;
@@ -302,7 +326,7 @@ export class Agent {
     this.jobs.killAll();
   }
 
-  async *runTurn(prompt: string, signal: AbortSignal): AsyncGenerator<AgentEvent> {
+  async *runTurn(prompt: UserPrompt, signal: AbortSignal): AsyncGenerator<AgentEvent> {
     // The budget is per turn; the declaration outlives one, because a follow-up
     // like "now do the same for the other file" is the same piece of work.
     this.scope.beginTurn();
@@ -311,7 +335,28 @@ export class Agent {
     this.mutatedSinceCheck = false;
     this.checksThisTurn = 0;
 
-    const submitted = await this.options.hooks?.userPromptSubmit(prompt, signal);
+    const promptText = userPromptText(prompt);
+    const promptParts: UserPromptPart[] =
+      typeof prompt === 'string'
+        ? [{ type: 'text', text: prompt }]
+        : prompt.map((part) => ({ ...part }));
+    if (
+      promptParts.some((part) => part.type === 'image') &&
+      !this.options.model.model.capabilities.vision
+    ) {
+      yield {
+        type: 'error',
+        error: {
+          kind: 'invalid_request',
+          message: `${this.options.model.model.name} does not support image input`,
+          retryable: false,
+        },
+      };
+      yield { type: 'turn_end', reason: 'error' };
+      return;
+    }
+
+    const submitted = await this.options.hooks?.userPromptSubmit(promptText, signal);
     if (submitted) {
       yield hookEvent('UserPromptSubmit', submitted);
       if (submitted.decision === 'deny') {
@@ -324,16 +369,28 @@ export class Agent {
     }
 
     const context = submitted?.context ?? [];
+    const content: UserPromptPart[] =
+      context.length > 0 && promptParts.length === 1 && promptParts[0]?.type === 'text'
+        ? [
+            {
+              type: 'text',
+              text: `${promptParts[0].text}\n\n<hook-context>\n${context.join('\n\n')}\n</hook-context>`,
+            },
+          ]
+        : [
+            ...promptParts,
+            ...(context.length
+              ? [
+                  {
+                    type: 'text' as const,
+                    text: `<hook-context>\n${context.join('\n\n')}\n</hook-context>`,
+                  },
+                ]
+              : []),
+          ];
     await this.append({
       role: 'user',
-      content: [
-        {
-          type: 'text',
-          text: context.length
-            ? `${prompt}\n\n<hook-context>\n${context.join('\n\n')}\n</hook-context>`
-            : prompt,
-        },
-      ],
+      content,
     });
 
     const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_STEPS;
@@ -466,7 +523,9 @@ export class Agent {
    * skill file cannot hand itself a tool the user's settings withheld.
    */
   private offeredTools(): ToolDefinition[] {
-    const all = this.tools.definitions();
+    const all = this.tools.definitions(
+      (tool) => !tool.deferred || this.surfacedTools.has(tool.name),
+    );
     if (!this.toolRestriction) return all;
     const kept = new Set(
       narrow(
@@ -1014,4 +1073,11 @@ function errorPart(call: ToolCallPart, message: string): ToolResultPart {
 
 function asResult(part: ToolResultPart): ToolResult {
   return { output: part.output, ...(part.isError ? { isError: true } : {}) };
+}
+
+function userPromptText(prompt: UserPrompt): string {
+  if (typeof prompt === 'string') return prompt;
+  return prompt
+    .map((part) => (part.type === 'text' ? part.text : `[${part.mediaType} image]`))
+    .join('\n\n');
 }
