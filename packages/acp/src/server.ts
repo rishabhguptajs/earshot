@@ -263,6 +263,13 @@ function assertWorkspace(cwd: string): void {
 
 function rejectClientMcp(servers: acp.McpServer[]): void {
   if (servers.length > 0) {
-    throw new Error('client-provided MCP servers are not supported; configure them in earshot');
+    // A RequestError rather than a plain Error: the JSON-RPC layer reports an
+    // unrecognised throw as "Internal error" with no message, and a client told
+    // only that would have no way to learn its servers were not taken - which is
+    // the silent-ignore this rejection exists to avoid.
+    throw acp.RequestError.invalidParams(
+      undefined,
+      'client-provided MCP servers are not supported; configure them in earshot',
+    );
   }
 }
