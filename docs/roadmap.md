@@ -149,6 +149,26 @@ implementation and artifact builds are complete.
 ACP server (Zed, JetBrains, Neovim), in-process TypeScript extensions, image
 input, Anthropic server-side compaction, tool search for large MCP sets.
 
+## M7 — Trust at Scale ⬜
+
+Production hardening and a sustainable ecosystem after M6 has seen real use:
+
+- Stable v1 compatibility guarantees for configuration, transcripts, headless
+  output, ACP, and extension APIs
+- A discoverable plugin and extension marketplace with sandboxed third-party code
+- Signed standalone binaries, macOS notarization, and Windows code signing
+- Signed automatic updates with stable, beta, and nightly release channels
+- Crash recovery and repair tooling for interrupted or damaged sessions
+- Performance benchmarks and regression budgets for startup, rendering, context
+  shaping, and long-running sessions
+- A maintained live-provider compatibility matrix
+- Package-manager distribution through Homebrew, WinGet, Scoop, and AUR
+- Independent security audit and a refreshed threat model before v1 stability
+
+**Entry condition:** M6 has shipped and real editor/extension usage has exposed
+which interfaces deserve a long-term compatibility promise. Until then, this is
+direction rather than a frozen contract.
+
 ## Explicitly out of scope
 
 - **Subscription workarounds.** No Claude Pro/Max OAuth, no Gemini Code Assist
@@ -164,5 +184,5 @@ input, Anthropic server-side compaction, tool search for large MCP sets.
    anything, run a turn and report what breaks.
 2. **Adding providers** — [usually one line](adding-a-provider.md).
 3. **Windows testing.** CI covers it; real terminals are another matter.
-4. **Driving the TUI for real.** It is only ever exercised against a fake
-   terminal; a session in a real one is worth more than another test.
+4. **Terminal coverage.** macOS has a live PTY smoke test; hands-on Windows
+   Terminal sessions and unusual terminal emulators remain especially useful.
