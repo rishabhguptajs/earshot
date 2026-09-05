@@ -88,7 +88,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
   });
 
   try {
-    const shell = resolveShell(env);
+    const shell = resolveShell(env, hostPlatform);
     checks.push({ name: 'shell', status: 'pass', detail: shell.file });
   } catch (error) {
     checks.push({

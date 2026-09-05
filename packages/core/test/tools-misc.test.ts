@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { askUserTool } from '../src/tools/ask-user.ts';
 import { bashTool } from '../src/tools/bash.ts';
 import { exec, KILL_GRACE_MS } from '../src/tools/exec.ts';
@@ -52,6 +54,33 @@ describe('shell resolution', () => {
   test('the resolved shell takes the command as a single -c argument', () => {
     if (process.platform === 'win32') return;
     expect(resolveShell({}).args).toEqual(['-c']);
+  });
+
+  // The branch is chosen by the caller's platform, not the runner's, so these
+  // two run identically on all three CI platforms. Before this, a Windows runner
+  // took the Git Bash branch for every one of them.
+  test('an explicitly POSIX host resolves bash without consulting the real platform', () => {
+    expect(resolveShell({}, 'linux')).toEqual({ file: '/bin/bash', args: ['-c'] });
+    expect(resolveShell({ EARSHOT_BASH: '/opt/custom/bash' }, 'darwin').file).toBe(
+      '/opt/custom/bash',
+    );
+  });
+
+  test('an explicitly Windows host still refuses to fall back to PowerShell', () => {
+    expect(() => resolveShell({ ProgramFiles: 'C:\\nonexistent' }, 'win32')).toThrow(
+      ShellNotFoundError,
+    );
+    expect(() => resolveShell({ ProgramFiles: 'C:\\nonexistent' }, 'win32')).toThrow(
+      /Git for Windows/,
+    );
+  });
+
+  test('an explicitly Windows host accepts an EARSHOT_BASH that exists on disk', async () => {
+    await withTempDir(async (dir) => {
+      const fake = join(dir, 'bash.exe');
+      await writeFile(fake, '');
+      expect(resolveShell({ EARSHOT_BASH: fake }, 'win32')).toEqual({ file: fake, args: ['-c'] });
+    });
   });
 });
 
