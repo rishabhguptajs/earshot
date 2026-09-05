@@ -204,7 +204,12 @@ Production hardening and a sustainable ecosystem after M6 has seen real use:
   session is a truncated or partial-line tail rather than a corrupt structure;
   repair means detecting that tail and recovering the tree around it
 - Performance benchmarks and regression budgets for startup, rendering, context
-  shaping, and long-running sessions
+  shaping, and long-running sessions. The harness and the recorded baselines are
+  in — `bun run bench`, documented in [Performance baselines](performance.md),
+  with CI recording a run per platform on every push to `main`. The budgets are
+  deliberately not: the first baselines put startup at a 9% spread and several
+  in-process cases above 200%, so what a threshold may claim has to come from
+  the accumulated history rather than from the first run that produced it
 - A maintained live-provider compatibility matrix. This is the standing gap the
   suite cannot close: every adapter is covered through the shared bridge with
   scripted output, and only OpenRouter has answered live

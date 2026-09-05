@@ -12,6 +12,7 @@
     "build": "bun run scripts/build.ts",
     "build:binaries": "bun run scripts/build-binaries.ts",
     "build:docs": "vitepress build docs",
+    "bench": "bun run scripts/bench.ts",
     "docs:dev": "vitepress dev docs",
     "smoke:npm": "bun run build && bun run scripts/smoke-npm-package.ts",
     "release:check": "bun run scripts/check-release.ts && bun run lint && bun run typecheck && bun test && bun run build:docs && bun run smoke:npm",
