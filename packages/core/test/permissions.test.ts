@@ -207,3 +207,35 @@ describe('settings files', () => {
     });
   });
 });
+
+describe('preferences in settings', () => {
+  test('reads curiosity and maxCostUsd, narrowest scope winning', () =>
+    withTempDir(async (dir) => {
+      await mkdir(join(dir, '.earshot'), { recursive: true });
+      await writeFile(
+        join(dir, '.earshot/settings.json'),
+        JSON.stringify({ curiosity: 'high', maxCostUsd: 5 }),
+      );
+      await writeFile(join(dir, '.earshot/settings.local.json'), JSON.stringify({ maxCostUsd: 2 }));
+
+      const loaded = await loadSettings(dir);
+      expect(loaded.curiosity).toBe('high');
+      expect(loaded.maxCostUsd).toBe(2);
+      expect(loaded.problems).toEqual([]);
+    }));
+
+  test('reports a bad value rather than silently ignoring it', () =>
+    withTempDir(async (dir) => {
+      await mkdir(join(dir, '.earshot'), { recursive: true });
+      await writeFile(
+        join(dir, '.earshot/settings.json'),
+        JSON.stringify({ curiosity: 'maximum', maxCostUsd: -1 }),
+      );
+
+      const loaded = await loadSettings(dir);
+      expect(loaded.curiosity).toBeUndefined();
+      expect(loaded.maxCostUsd).toBeUndefined();
+      expect(loaded.problems.join('\n')).toContain('not a curiosity level');
+      expect(loaded.problems.join('\n')).toContain('positive number of dollars');
+    }));
+});

@@ -1,6 +1,6 @@
 import { buildRegistry, type ProviderRegistry } from '@earshot/providers';
 import { Agent, type AgentOptions } from '../agent.ts';
-import { buildSystemPrompt } from '../context/system-prompt.ts';
+import { buildSystemPrompt, type Curiosity } from '../context/system-prompt.ts';
 import { loadHooks } from '../hooks/config.ts';
 import { HookRunner } from '../hooks/runner.ts';
 import { resolveModel } from '../model.ts';
@@ -42,6 +42,12 @@ export interface CreateSessionOptions {
   /** Disables undo snapshots. */
   noUndo?: boolean;
   maxSteps?: number;
+  /** Overrides `curiosity` in settings. */
+  curiosity?: Curiosity;
+  /** Overrides `maxCostUsd` in settings. Zero or less removes the budget. */
+  maxCostUsd?: number;
+  /** Asked when the budget is reached; returns a higher limit, or stops. */
+  confirmBudget?: (spentUsd: number, limitUsd: number) => Promise<number | undefined>;
   /**
    * Tools contributed from outside core - MCP servers today, subagents next.
    * They are appended to the built-ins and go through the same gate: core knows
@@ -106,6 +112,15 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   const registry = options.registry ?? buildRegistry();
   const settings = await loadSettings(options.cwd);
   const mode = options.mode ?? settings.defaultMode ?? 'ask';
+  const curiosity = options.curiosity ?? settings.curiosity ?? 'normal';
+  // A flag of zero or less is how the CLI says "no budget", which has to beat a
+  // settings file that sets one, or a limit would be impossible to turn off.
+  const maxCostUsd =
+    options.maxCostUsd !== undefined
+      ? options.maxCostUsd > 0
+        ? options.maxCostUsd
+        : undefined
+      : settings.maxCostUsd;
 
   const resolved = await resolveModel(registry, options.model, {
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
@@ -150,6 +165,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   const system = await buildSystemPrompt({
     cwd: options.cwd,
     mode,
+    curiosity,
     model: modelRef,
     skills: renderSkillIndex(discovered.skills),
     ...(started?.context.length
@@ -179,6 +195,8 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(options.prompt ? { prompt: options.prompt } : {}),
     ...(options.ask ? { ask: options.ask } : {}),
     ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
+    ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    ...(options.confirmBudget ? { confirmBudget: options.confirmBudget } : {}),
     ...(sessionTools.length > BUILTIN_TOOLS.length ? { tools: sessionTools } : {}),
     ...(hooks.isEmpty ? {} : { hooks }),
     ...(shadow ? { shadow } : {}),

@@ -9,6 +9,7 @@ import {
   UnknownModelError,
 } from '@earshot/core';
 import type { ParsedArgs } from '../args.ts';
+import { parseCuriosity, parseMaxCost } from '../budget.ts';
 import { startExtensions } from '../extensions/index.ts';
 import { loadImage } from '../image.ts';
 import {
@@ -56,6 +57,17 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
     mode = requested;
   }
 
+  const curiosity = parseCuriosity(flags.curiosity);
+  if (curiosity === 'invalid') {
+    process.stderr.write(`"${flags.curiosity}" is not a curiosity level: low, normal or high\n`);
+    return 2;
+  }
+  const maxCostUsd = parseMaxCost(flags['max-cost']);
+  if (maxCostUsd === 'invalid') {
+    process.stderr.write(`"${flags['max-cost']}" is not an amount in dollars\n`);
+    return 2;
+  }
+
   const extensions = await startExtensions(process.cwd());
 
   let session: Awaited<ReturnType<typeof createSession>>;
@@ -68,6 +80,8 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
       model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
       ...(mode ? { mode } : {}),
       ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
+      ...(curiosity ? { curiosity } : {}),
+      ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
       ...resumeFrom(flags),
     });
   } catch (error) {
@@ -121,6 +135,12 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
       if (event.type === 'turn_end' && event.reason === 'max_steps') {
         exitCode = 1;
         subtype = 'max_steps';
+      }
+      // Its own exit code: a script that set a ceiling needs to tell "stopped
+      // because it ran out of budget" from "stopped because it failed".
+      if (event.type === 'turn_end' && event.reason === 'budget') {
+        exitCode = 3;
+        subtype = 'budget';
       }
     }
   } finally {
@@ -211,6 +231,7 @@ function makeEmitter(format: OutputFormat) {
       case 'turn_end':
         if (event.reason === 'aborted') process.stderr.write('\ninterrupted\n');
         if (event.reason === 'max_steps') process.stderr.write('\nstopped: step limit reached\n');
+        if (event.reason === 'budget') process.stderr.write('\nstopped: cost budget reached\n');
         break;
       default:
         break;
