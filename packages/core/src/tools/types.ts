@@ -96,6 +96,14 @@ export interface Tool<Input = unknown> {
    * system, the network, a process - is not read-only.
    */
   readOnly: boolean;
+  /**
+   * A deferred tool is registered and callable but kept out of the tool list
+   * sent to the model until `tool_search` surfaces it. Set on MCP tools once a
+   * session has more of them than a prompt can carry honestly: a hundred
+   * schemas in every request is context the user pays for on every turn and the
+   * model reads past on most of them.
+   */
+  deferred?: boolean;
   /** Throws `ToolInputError` when the model sends something unusable. */
   parse(input: unknown): Input;
   /** Required unless `readOnly`; enforced by `defineTool`. */

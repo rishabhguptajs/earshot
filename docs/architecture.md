@@ -13,11 +13,13 @@ and bundled into it at build time.
 | `packages/providers` | `Provider`/`WireApi` interfaces, registry, model catalog, auth store, wire adapters |
 | `packages/core` | Agent loop, tools, permissions, sessions, undo, context, scope, memory, verification, skills, hooks, plans |
 | `packages/mcp` | MCP client manager |
+| `packages/acp` | Stable ACP v1 server and translation from agent events to editor updates |
 | `packages/tui` | Ink app, inline scrollback |
 | `packages/cli` | The `earshot` binary; the only publishable package |
 
-Dependencies point one way: `cli → tui → core → providers`. Nothing in
-`providers` knows the agent loop exists.
+Dependencies point inward: `cli` assembles `tui`, `acp` and `mcp`; each
+integration depends on `core`, which depends on `providers`. Core knows nothing
+about editors or MCP, and providers know nothing about the agent loop.
 
 ## The unified types
 
@@ -37,6 +39,11 @@ A wire adapter is the only component that translates these to a vendor's actual
 API. That's what makes provider-agnostic behaviour real rather than aspirational:
 switching from Anthropic to Gemini mid-session doesn't change a single type the
 loop sees.
+
+User turns use that same boundary: `Agent.runTurn()` accepts text or a sequence
+of text and image parts. CLI paths become base64 parts, HTTPS URLs remain
+references, and ACP images map without a provider-specific branch. Vision
+capability checks happen before history is appended or a provider is called.
 
 ### providerMetadata
 
@@ -253,6 +260,20 @@ Two structural consequences worth naming here:
   scope contract is the one piece of M3 that a nested agent could have quietly
   escaped, and sharing the object is what makes that impossible rather than
   merely discouraged.
+
+## ACP server
+
+`packages/acp` translates stable ACP v1 requests into the existing
+`createSession()` and `Agent.runTurn()` contracts. Text, reasoning, tools, usage,
+permissions and questions become ACP updates or client requests; cancellation
+aborts the same signal used by model and tool execution. Session ids remain the
+JSONL transcript ids, so editor resume is normal append-only resume rather than
+a parallel persistence format.
+
+The CLI supplies the session factory so configured MCP tools can be assembled
+outside core. Client-supplied MCP definitions are not accepted in the first ACP
+slice; accepting process definitions from an editor needs an explicit trust
+contract, not an implicit exception to MCP startup policy.
 
 ## Design rules
 

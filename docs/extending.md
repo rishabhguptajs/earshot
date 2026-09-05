@@ -1,13 +1,20 @@
 # Extending earshot
 
-Four ways to add behaviour: MCP servers, skills, slash commands and hooks. All
-four are content that ends up in front of a model or a shell, and all four are
-designed on the assumption that the other side is hostile or broken.
+Five ways to add behaviour: MCP servers, in-process extensions, skills, slash
+commands and hooks. All five are content that ends up in front of a model or a
+shell, and all five are designed on the assumption that the other side is
+hostile or broken.
 
 The rule they share: **nothing here can grant a permission.** A skill, a hook and
 an MCP server can each tell earshot to do something, and each of those things
 goes through the same gate a request typed by the user does. What they cannot do
 is approve it.
+
+The ACP server is another consumer of these boundaries, not a bypass around
+them. An editor can display and answer a permission request, but cannot turn a
+deny into an allow. MCP servers configured for an ACP session are still loaded
+through earshot's trust and permission rules; client-provided MCP process
+definitions are currently rejected.
 
 ## MCP servers
 
@@ -28,6 +35,12 @@ reported rather than ignored.
 **Tools are namespaced** `server__tool`, so two servers cannot collide, and a
 server name may not itself contain `__` — one that could would be able to
 impersonate another server's tools.
+
+**Past 25 MCP tools, they are not listed in the prompt.** Instead the model gets
+one `tool_search` tool and finds them by what it wants to do. A search surfaces
+at most ten at a time and they stay listed for the rest of the session. Nothing
+about the gate changes: a surfaced tool is permission-checked exactly as it would
+have been had it been listed all along, and `tool_search` itself grants nothing.
 
 **An MCP tool is never read-only.** A server's `readOnlyHint` is an assertion by
 the same party that wrote the tool, so earshot displays it and does not believe
@@ -52,6 +65,54 @@ reported and skipped; the session runs with the tools it does have.
 | `earshot mcp list` | What is configured, and which servers are not started |
 | `earshot mcp trust <name>` | Allow a project-scope server to start |
 | `earshot mcp untrust <name>` | Withdraw that |
+
+## In-process extensions
+
+A TypeScript or JavaScript module that contributes tools without a process
+between it and earshot. Put one in `.earshot/extensions/` for a project, or in
+`extensions/` under the config directory for every project. Every `.ts`, `.mts`,
+`.js` or `.mjs` file there is one extension, named after its file.
+
+```ts
+// .earshot/extensions/jira.ts
+export default {
+  tools: [
+    {
+      name: 'ticket',
+      description: 'Reads a Jira ticket by key',
+      inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
+      readOnly: true,
+      async execute(input) {
+        return `ticket ${input.key}`;
+      },
+    },
+  ],
+};
+```
+
+No import is needed and none is offered: earshot ships as a bundled binary, not
+as a library, so a contract that required importing it would only work where
+earshot happened to be resolvable. The shape is structural and validated on
+load. `execute` may return a string or `{ output, isError?, title? }`.
+
+**An extension is not sandboxed and cannot be.** Being in-process is the whole
+point of it — that is what an MCP server is for otherwise. So the boundary is
+not what it may do once loaded, but whether it is loaded at all: an extension
+checked into a repository you cloned stays inert until
+`earshot extensions trust <name>` names it, recorded in `.earshot/settings.local.json`, which is not
+committed. One under your own config directory is your own file and loads.
+
+**Its tools are namespaced and gated.** `jira.ts` contributing `ticket` becomes
+`jira__ticket`, so an extension cannot shadow `bash`. A tool that is not
+`readOnly` goes through the permission gate as `Extension(jira__ticket)`; an
+extension may write the title and detail the prompt shows, but not the rule name
+or target, or it could match a rule you wrote for something else. Unlike an MCP
+server, a `readOnly` claim here is honoured — a false one is the least of what
+code you already imported into the process could do.
+
+A module that throws on import, or that does not default-export an object, costs
+that extension's tools and nothing else; `earshot extensions list` names what is
+there without importing anything untrusted.
 
 ## Skills
 

@@ -7,6 +7,7 @@ import type {
   PermissionRequest,
   PromptChoice,
   TodoItem,
+  UserPrompt,
 } from '@earshot/core';
 import {
   deleteMemory,
@@ -53,11 +54,18 @@ export interface AppProps {
   session: CreatedSession;
   model: string;
   /** Run immediately on start, for `earshot "do the thing"`. */
-  initialPrompt?: string;
+  initialPrompt?: UserPrompt;
 }
 
 let sequence = 0;
 const nextId = () => `item_${sequence++}`;
+
+function promptLabel(prompt: UserPrompt): string {
+  if (typeof prompt === 'string') return prompt;
+  return prompt
+    .map((part) => (part.type === 'text' ? part.text : `[attached ${part.mediaType} image]`))
+    .join('\n');
+}
 
 export function App({ session, model, initialPrompt }: AppProps) {
   const { exit } = useApp();
@@ -122,12 +130,12 @@ export function App({ session, model, initialPrompt }: AppProps) {
   const lastAssistantText = useRef('');
 
   const runTurn = useCallback(
-    async (prompt: string) => {
+    async (prompt: UserPrompt) => {
       setBusy(true);
       // Cleared per turn: a stale answer read back as this turn's plan is worse
       // than no plan at all.
       lastAssistantText.current = '';
-      push({ kind: 'user', id: nextId(), text: prompt });
+      push({ kind: 'user', id: nextId(), text: promptLabel(prompt) });
 
       const abort = new AbortController();
       controller.current = abort;

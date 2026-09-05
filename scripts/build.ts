@@ -8,6 +8,8 @@ import { rm } from 'node:fs/promises';
  */
 /** Everything published as a dependency of `earshot` rather than inlined. */
 const EXTERNAL = [
+  '@agentclientprotocol/sdk',
+  '@agentclientprotocol/sdk/*',
   '@ai-sdk/*',
   'ai',
   'zod',
