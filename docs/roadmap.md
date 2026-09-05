@@ -153,8 +153,12 @@ input, Anthropic server-side compaction, tool search for large MCP sets.
 and loading, prompt streaming, cancellation, permissions, elicitation and tool
 events are implemented with protocol-level tests. Zed, JetBrains and Neovim
 still require the recorded physical QA checklist in [Editor integration with
-ACP](acp.md); images, client-provided MCP definitions and draft ACP v2 are not
-part of this slice.
+ACP](acp.md); client-provided MCP definitions and draft ACP v2 are not part of
+this slice.
+
+**Image input implemented:** unified user prompts now carry text and images into
+compatible provider adapters from `--image` and ACP. Unsupported model
+capabilities and file formats fail before the provider request.
 
 ## Explicitly out of scope
 

@@ -26,6 +26,7 @@ Flags
   --continue                   resume the most recent session here
   --resume [<path>]            resume a specific session transcript
   --api-key <key>              credentials for this run only
+  --image <path|https-url>     attach one PNG, JPEG, GIF or WebP image
   --version, -v                print the version
   --help, -h                   print this help
 `;

@@ -34,6 +34,7 @@ earshot -p "hello" --output-format json
 |---|---|---|
 | `--model <ref>` | any `earshot models` reference | `anthropic/claude-opus-5` |
 | `--output-format <fmt>` | `text`, `json`, `stream-json` | `text` |
+| `--image <path-or-url>` | PNG, JPEG, GIF or WebP path, or HTTPS URL | none |
 
 **Output formats**
 
@@ -46,6 +47,11 @@ Both JSON formats are a versioned contract; see [Headless output](headless.md)
 for the schema and what `earshot.v1` promises. `json@v1` pins it explicitly.
 
 `Ctrl-C` aborts the request; partial output is kept.
+
+`--image` attaches one image to the prompt. Local files are capped at 20 MB and
+encoded into the append-only transcript; HTTPS URLs stay references for the
+provider adapter. A model without the `vision` capability is rejected before a
+request is made. The same flag attaches to an initial interactive TUI prompt.
 
 ## `earshot auth`
 
