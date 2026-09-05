@@ -32,7 +32,11 @@ try {
   );
   if (install.exitCode !== 0) process.exit(install.exitCode);
 
-  const executable = join(prefix, 'bin', process.platform === 'win32' ? 'earshot.cmd' : 'earshot');
+  // A global prefix is laid out differently per platform: npm puts the shims in
+  // `<prefix>/bin` on POSIX but directly in `<prefix>` on Windows. Asserting the
+  // wrong one here fails the smoke test for a package that installed correctly.
+  const executable =
+    process.platform === 'win32' ? join(prefix, 'earshot.cmd') : join(prefix, 'bin', 'earshot');
   const run = Bun.spawnSync([executable, '--version'], { stdout: 'pipe', stderr: 'inherit' });
   if (run.exitCode !== 0) process.exit(run.exitCode);
   const expected = (
