@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { askUserTool } from '../src/tools/ask-user.ts';
 import { bashTool } from '../src/tools/bash.ts';
+import { exec, KILL_GRACE_MS } from '../src/tools/exec.ts';
 import { matchesGlob } from '../src/tools/glob-match.ts';
 import { resolveShell, ShellNotFoundError } from '../src/tools/shell.ts';
 import { todoTool } from '../src/tools/todo.ts';
@@ -76,6 +77,25 @@ describe('bash', () => {
   test('an empty command is rejected before it reaches a shell', () => {
     expect(() => bashTool.parse({ command: '   ' })).toThrow(ToolInputError);
   });
+});
+
+describe('a command that will not die', () => {
+  test('returns soon after its timeout instead of waiting for what it started', async () => {
+    const shell = resolveShell();
+    const started = Date.now();
+    // Ignores SIGTERM and holds the pipes open through a child of its own,
+    // which is the shape that made a hook with a timeout wedge the turn: the
+    // `close` event waits on the grandchild, however dead the child is.
+    const result = await exec(shell.file, [...shell.args, "trap '' TERM; sleep 30"], {
+      cwd: process.cwd(),
+      timeoutMs: 200,
+    });
+
+    expect(result.timedOut).toBe(true);
+    // Generous, because it is asserting "bounded" rather than a duration - the
+    // failure it guards against was thirty seconds, or forever.
+    expect(Date.now() - started).toBeLessThan(KILL_GRACE_MS + 4_000);
+  }, 20_000);
 });
 
 describe('todo', () => {
