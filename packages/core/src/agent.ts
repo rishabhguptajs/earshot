@@ -78,7 +78,13 @@ export type AgentEvent =
    * itself worth seeing, and reporting nothing would hide it.
    */
   | { type: 'intent'; text: string | undefined; calls: number }
-  | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' }
+  /**
+   * The session budget was reached. Emitted whether the user then raises it or
+   * stops: a run that quietly spent past its limit and a run that was allowed
+   * to should not look the same in a transcript.
+   */
+  | { type: 'budget'; spentUsd: number; limitUsd: number; raisedTo?: number }
+  | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' | 'budget' }
   | { type: 'error'; error: EarshotError };
 
 export interface AgentOptions {
@@ -127,6 +133,17 @@ export interface AgentOptions {
   scopeContract?: ScopeContract;
   /** Set on a subagent. Its cost lands on the parent's total, not beside it. */
   onCost?: (costUsd: number) => void;
+  /**
+   * Session budget in USD. Checked before each model call rather than after:
+   * stopping once the money is gone is not a budget, it is a receipt.
+   */
+  maxCostUsd?: number;
+  /**
+   * Asked when the budget is reached. Returns a new, higher limit to continue
+   * with, or undefined to stop. Absent means stop - a headless run must not
+   * block forever waiting for a terminal that is not there.
+   */
+  confirmBudget?: (spentUsd: number, limitUsd: number) => Promise<number | undefined>;
   /** Steps a subagent this agent spawns may take. */
   subagentMaxSteps?: number;
 }
@@ -155,6 +172,7 @@ export class Agent {
   private rules: Rule[];
   private mode: PermissionMode;
   private totalCostUsd = 0;
+  private maxCostUsd: number | undefined;
   /**
    * Mutable so a memory captured mid-session applies from the next call rather
    * than from the next session - a preference the user has to restart to see
@@ -221,6 +239,16 @@ export class Agent {
     this.promptFn = options.prompt;
     this.askFn = options.ask;
     this.systemPrompt = options.system;
+    this.maxCostUsd = options.maxCostUsd;
+  }
+
+  get budgetUsd(): number | undefined {
+    return this.maxCostUsd;
+  }
+
+  /** Undefined removes the budget. Used by `/cost` and by the overrun prompt. */
+  setBudget(maxCostUsd: number | undefined): void {
+    this.maxCostUsd = maxCostUsd;
   }
 
   /** Replaces the approval callback. Passing undefined turns every ask into a denial. */
@@ -409,6 +437,15 @@ export class Agent {
         await this.append(this.queued.shift() as Message);
       }
 
+      const overrun = await this.checkBudget();
+      if (overrun) {
+        yield overrun.event;
+        if (overrun.stop) {
+          yield { type: 'turn_end', reason: 'budget' };
+          return;
+        }
+      }
+
       for await (const event of this.prepareRequest(signal)) yield event;
       const messages = this.requestMessages();
       this.lastRequestTokens = estimateTokens(messages, this.effectiveSystem);
@@ -515,6 +552,29 @@ export class Agent {
     }
 
     yield { type: 'turn_end', reason: 'max_steps' };
+  }
+
+  /**
+   * Whether this session may make another model call.
+   *
+   * The check is before the call, so the limit is a decision point rather than
+   * a post-mortem. Raising it is the user's, and only ever upwards: a callback
+   * that answers with a limit already spent would loop.
+   */
+  private async checkBudget(): Promise<{ event: AgentEvent; stop: boolean } | undefined> {
+    const limitUsd = this.maxCostUsd;
+    if (limitUsd === undefined || this.totalCostUsd < limitUsd) return undefined;
+
+    const spentUsd = this.totalCostUsd;
+    const raisedTo = await (this.options.confirmBudget ?? defaultBudgetPrompt(this.askFn))(
+      spentUsd,
+      limitUsd,
+    );
+    if (raisedTo === undefined || !Number.isFinite(raisedTo) || raisedTo <= spentUsd) {
+      return { event: { type: 'budget', spentUsd, limitUsd }, stop: true };
+    }
+    this.maxCostUsd = raisedTo;
+    return { event: { type: 'budget', spentUsd, limitUsd, raisedTo }, stop: false };
   }
 
   /**
@@ -1073,6 +1133,27 @@ function errorPart(call: ToolCallPart, message: string): ToolResultPart {
 
 function asResult(part: ToolResultPart): ToolResult {
   return { output: part.output, ...(part.isError ? { isError: true } : {}) };
+}
+
+/**
+ * The budget question, asked through whatever the session uses to ask the user
+ * anything else. A session with no way to ask - headless, or a subagent - stops
+ * rather than blocking on a terminal that is not there.
+ */
+function defaultBudgetPrompt(
+  ask: ((question: string, options?: string[]) => Promise<string>) | undefined,
+): (spentUsd: number, limitUsd: number) => Promise<number | undefined> {
+  if (!ask) return async () => undefined;
+  return async (spentUsd, limitUsd) => {
+    const answer = await ask(
+      `This session has spent $${spentUsd.toFixed(2)} against a $${limitUsd.toFixed(2)} budget. ` +
+        'Continue?',
+      ['Stop here', `Raise the budget to $${(limitUsd * 2).toFixed(2)}`, 'Remove the budget'],
+    );
+    if (answer.startsWith('Raise')) return limitUsd * 2;
+    if (answer.startsWith('Remove')) return Number.MAX_SAFE_INTEGER;
+    return undefined;
+  };
 }
 
 function userPromptText(prompt: UserPrompt): string {

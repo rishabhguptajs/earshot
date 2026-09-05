@@ -37,7 +37,7 @@ export interface ResultRecord {
   schema: string;
   type: 'result';
   /** `success` unless something stopped the turn; `isError` is the short form. */
-  subtype: 'success' | 'error' | 'interrupted' | 'max_steps';
+  subtype: 'success' | 'error' | 'interrupted' | 'max_steps' | 'budget';
   isError: boolean;
   text: string;
   costUsd: number;
@@ -103,6 +103,14 @@ export function toStreamRecord(event: AgentEvent): StreamRecord | undefined {
       };
     case 'usage':
       return { ...base, type: 'usage', usage: event.usage, costUsd: event.costUsd };
+    case 'budget':
+      return {
+        ...base,
+        type: 'budget',
+        spentUsd: event.spentUsd,
+        limitUsd: event.limitUsd,
+        ...(event.raisedTo !== undefined ? { raisedTo: event.raisedTo } : {}),
+      };
     case 'compacted':
       return { ...base, type: 'compacted', replaced: event.replaced };
     case 'scope_concern':

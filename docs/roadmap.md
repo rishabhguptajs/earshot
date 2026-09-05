@@ -83,7 +83,7 @@ The milestone the project is named after.
 
 **Not done in M3:** `/plan` (behaviour 3) and the intent line (behaviour 6),
 which move to M4 with the rest of the command surface. Curiosity levels and
-`--max-cost` are also still unimplemented.
+`--max-cost` also landed later, after M6.
 
 **Verification:** the TUI has completed a live-model turn in a real macOS PTY;
 its detailed interaction suite also runs against a controlled terminal stream.
@@ -119,7 +119,7 @@ is *not* allowed to do. See [Extending earshot](extending.md).
 **Not done in M4:** ChatGPT sign-in for Codex models, which moved from "planned"
 to "deliberately not supported" — see
 [Providers](providers.md#deliberately-not-supported). Curiosity levels and
-`--max-cost` are still unimplemented.
+`--max-cost` landed after M6.
 
 **Verification:** the suite spawns a real stdio MCP process and covers its
 environment isolation, tool listing, calls, diagnostics, and shutdown.
@@ -176,6 +176,9 @@ the model, which is the thing the provider boundary exists to prevent.
 
 **Acceptance remaining:** the recorded editor QA checklist in Zed, JetBrains and
 Neovim. Everything else in M6 is implemented and covered by tests.
+
+**Since M6:** `--max-cost` and `curiosity`, the last two behaviours
+[Listening](listening.md) described but the code did not have.
 
 ## Explicitly out of scope
 

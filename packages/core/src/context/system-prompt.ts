@@ -3,9 +3,26 @@ import { loadMemories, renderMemories } from '../memory/store.ts';
 import type { PermissionMode } from '../permissions/engine.ts';
 import { loadMemoryFiles, renderMemory } from './agents-md.ts';
 
+/**
+ * How readily the agent stops to ask. It moves one threshold and nothing else:
+ * what counts as "two readings that lead to different work". It never turns
+ * asking off, because a question the agent cannot ask becomes a guess the user
+ * pays for, and never makes asking free, because a prompt for something with an
+ * obvious default is its own failure.
+ */
+export type Curiosity = 'low' | 'normal' | 'high';
+
+export const CURIOSITY_LEVELS: Curiosity[] = ['low', 'normal', 'high'];
+
+export function isCuriosity(value: unknown): value is Curiosity {
+  return typeof value === 'string' && (CURIOSITY_LEVELS as string[]).includes(value);
+}
+
 export interface SystemPromptOptions {
   cwd: string;
   mode: PermissionMode;
+  /** Defaults to `normal`. */
+  curiosity?: Curiosity;
   /** Model reference, so the model can answer "what are you" accurately. */
   model: string;
   /** Rendered instead of being read from disk, in tests. */
@@ -34,11 +51,6 @@ touch, one paragraph on what changes and what does not, and a rough size. It is
 not paperwork - editing a file you did not list, adding a dependency, renaming or
 deleting files, reformatting, removing a test, or a change several times your own
 estimate will stop and ask the user before it happens.
-
-Ask rather than guess when the answer would change what you build. Use the
-ask_user tool for that. Do not use it for choices with an obvious default, or for
-permission to act - permission is handled by the harness, not by you. A question
-costs one round trip; the wrong assumption costs the whole task.
 
 Say why before you act. One line, immediately before each batch of tool calls,
 naming what you are about to do and what you expect to find or change. One line
@@ -69,6 +81,7 @@ export async function buildSystemPrompt(options: SystemPromptOptions): Promise<s
 
   const sections = [
     BASE,
+    curiositySection(options.curiosity ?? 'normal'),
     modeSection(options.mode),
     `<environment>\nWorking directory: ${options.cwd}\nPlatform: ${platform()}\nModel: ${options.model}\n</environment>`,
     memory,
@@ -77,6 +90,41 @@ export async function buildSystemPrompt(options: SystemPromptOptions): Promise<s
     options.extra ?? '',
   ];
   return sections.filter((section) => section.trim() !== '').join('\n\n');
+}
+
+/**
+ * Where the line sits between asking and deciding.
+ *
+ * The shared half is fixed at every level: never ask for permission to act -
+ * that is the harness's job, not the model's - and never ask about something
+ * with an obvious default. Only the threshold moves.
+ */
+function curiositySection(curiosity: Curiosity): string {
+  const shared =
+    'Use the ask_user tool, with 2-4 concrete options rather than an open question. Never ' +
+    'ask for permission to act: permission is handled by the harness, not by you. Never ask ' +
+    'about a choice with an obvious default.';
+
+  switch (curiosity) {
+    case 'low':
+      return (
+        `<curiosity>low</curiosity>\nDecide rather than ask. State the assumption you made in ` +
+        `one line and keep going; ask only when proceeding either way would be unsafe or would ` +
+        `waste the work if the guess is wrong. ${shared}`
+      );
+    case 'high':
+      return (
+        `<curiosity>high</curiosity>\nAsk whenever a second reading of the request is ` +
+        `plausible, before doing work that assumes the first one. The user has said they would ` +
+        `rather answer a question than review the wrong thing. ${shared}`
+      );
+    default:
+      return (
+        `<curiosity>normal</curiosity>\nAsk rather than guess when the answer would change ` +
+        `what you build, and decide the rest yourself. A question costs one round trip; the ` +
+        `wrong assumption costs the whole task. ${shared}`
+      );
+  }
 }
 
 /**
