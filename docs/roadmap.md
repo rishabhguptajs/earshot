@@ -149,6 +149,13 @@ implementation and artifact builds are complete.
 ACP server (Zed, JetBrains, Neovim), in-process TypeScript extensions, image
 input, Anthropic server-side compaction, tool search for large MCP sets.
 
+**ACP implementation in progress:** stable v1 initialization, session creation
+and loading, prompt streaming, cancellation, permissions, elicitation and tool
+events are implemented with protocol-level tests. Zed, JetBrains and Neovim
+still require the recorded physical QA checklist in [Editor integration with
+ACP](acp.md); images, client-provided MCP definitions and draft ACP v2 are not
+part of this slice.
+
 ## Explicitly out of scope
 
 - **Subscription workarounds.** No Claude Pro/Max OAuth, no Gemini Code Assist

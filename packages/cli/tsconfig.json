@@ -3,6 +3,7 @@
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src/**/*"],
   "references": [
+    { "path": "../acp" },
     { "path": "../core" },
     { "path": "../providers" },
     { "path": "../tui" },

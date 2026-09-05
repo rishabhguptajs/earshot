@@ -28,6 +28,7 @@ export default defineConfig({
           { text: 'CLI reference', link: '/cli' },
           { text: 'Providers', link: '/providers' },
           { text: 'Headless output', link: '/headless' },
+          { text: 'Editor integration (ACP)', link: '/acp' },
         ],
       },
       {
