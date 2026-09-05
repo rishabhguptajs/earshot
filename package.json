@@ -10,6 +10,11 @@
   },
   "scripts": {
     "build": "bun run scripts/build.ts",
+    "build:binaries": "bun run scripts/build-binaries.ts",
+    "build:docs": "vitepress build docs",
+    "docs:dev": "vitepress dev docs",
+    "smoke:npm": "bun run build && bun run scripts/smoke-npm-package.ts",
+    "release:check": "bun run scripts/check-release.ts && bun run lint && bun run typecheck && bun test && bun run build:docs && bun run smoke:npm",
     "typecheck": "tsc -b",
     "test": "bun test",
     "lint": "biome check .",
@@ -18,6 +23,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitepress": "^1.6.4"
   }
 }

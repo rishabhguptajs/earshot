@@ -26,3 +26,6 @@ jobs:
       - run: bun test
       - run: bun run build
       - run: node packages/cli/bin/earshot.js --version
+      - run: node packages/cli/bin/earshot.js doctor
+      - run: bun run build:docs
+      - run: bun run smoke:npm
