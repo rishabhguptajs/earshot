@@ -8,6 +8,7 @@ import {
 } from '@earshot/core';
 import { runTui } from '@earshot/tui';
 import type { ParsedArgs } from '../args.ts';
+import { parseCuriosity, parseMaxCost } from '../budget.ts';
 import { startExtensions } from '../extensions/index.ts';
 import { loadImage } from '../image.ts';
 
@@ -54,6 +55,17 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
     }
   }
 
+  const curiosity = parseCuriosity(flags.curiosity);
+  if (curiosity === 'invalid') {
+    process.stderr.write(`"${flags.curiosity}" is not a curiosity level: low, normal or high\n`);
+    return 2;
+  }
+  const maxCostUsd = parseMaxCost(flags['max-cost']);
+  if (maxCostUsd === 'invalid') {
+    process.stderr.write(`"${flags['max-cost']}" is not an amount in dollars\n`);
+    return 2;
+  }
+
   const extensions = await startExtensions(process.cwd());
 
   try {
@@ -65,6 +77,8 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
       model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
       ...(mode ? { mode } : {}),
       ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
+      ...(curiosity ? { curiosity } : {}),
+      ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
       ...resumeFrom(flags),
     });
 

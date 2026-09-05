@@ -29,6 +29,8 @@ Flags
   --resume [<path>]            resume a specific session transcript
   --api-key <key>              credentials for this run only
   --image <path|https-url>     attach one PNG, JPEG, GIF or WebP image
+  --max-cost <usd>             stop and ask before spending past this
+  --curiosity <level>          low, normal or high: how readily it asks
   --version, -v                print the version
   --help, -h                   print this help
 `;

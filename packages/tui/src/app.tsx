@@ -191,6 +191,19 @@ export function App({ session, model, initialPrompt }: AppProps) {
               setCost(agent.costUsd);
               setContext(agent.contextUse);
               break;
+            case 'budget':
+              push({
+                kind: 'notice',
+                id: nextId(),
+                text:
+                  event.raisedTo === undefined
+                    ? `stopped: $${event.spentUsd.toFixed(2)} spent against a ` +
+                      `$${event.limitUsd.toFixed(2)} budget`
+                    : `budget raised to $${event.raisedTo.toFixed(2)} after ` +
+                      `$${event.spentUsd.toFixed(2)} spent`,
+                color: theme.warning,
+              });
+              break;
             case 'verification':
               // Shown to the user as it was shown to the model: the command, the
               // exit code and the output, none of it summarised.

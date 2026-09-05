@@ -36,6 +36,8 @@ earshot -p "hello" --output-format json
 | `--model <ref>` | any `earshot models` reference | `anthropic/claude-opus-5` |
 | `--output-format <fmt>` | `text`, `json`, `stream-json` | `text` |
 | `--image <path-or-url>` | PNG, JPEG, GIF or WebP path, or HTTPS URL | none |
+| `--max-cost <usd>` | session ceiling, e.g. `2.50` or `$2.50`; `0` removes one | none |
+| `--curiosity <level>` | `low`, `normal`, `high` | `normal` |
 
 **Output formats**
 
@@ -48,6 +50,17 @@ Both JSON formats are a versioned contract; see [Headless output](headless.md)
 for the schema and what `earshot.v1` promises. `json@v1` pins it explicitly.
 
 `Ctrl-C` aborts the request; partial output is kept.
+
+`--max-cost` is checked before each model call, not after the spend. Headless
+has no one to ask, so reaching the ceiling stops the turn and exits **3** —
+distinct from `1` so a script can tell "ran out of budget" from "failed".
+Interactive prompts to stop, double the ceiling, or remove it. Both read
+`maxCostUsd` from settings when the flag is absent.
+
+`--curiosity` moves how readily the agent stops to ask: `low` decides and states
+the assumption, `high` asks whenever a second reading is plausible. It never
+turns asking off and never makes it free — see
+[Listening](listening.md#1-ask-before-guessing).
 
 `--image` attaches one image to the prompt. Local files are capped at 20 MB and
 encoded into the append-only transcript; HTTPS URLs stay references for the
