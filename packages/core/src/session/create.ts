@@ -1,9 +1,20 @@
 import { buildRegistry, type ProviderRegistry } from '@earshot/providers';
 import { Agent, type AgentOptions } from '../agent.ts';
 import { buildSystemPrompt } from '../context/system-prompt.ts';
+import { loadHooks } from '../hooks/config.ts';
+import { HookRunner } from '../hooks/runner.ts';
 import { resolveModel } from '../model.ts';
 import type { PermissionMode, PermissionPrompt } from '../permissions/engine.ts';
 import { loadSettings } from '../permissions/settings.ts';
+import {
+  discoverExtensions,
+  renderSkillIndex,
+  type Skill,
+  type SlashCommand,
+} from '../skills/discover.ts';
+import { BUILTIN_TOOLS } from '../tools/index.ts';
+import { skillTool } from '../tools/skill.ts';
+import type { Tool } from '../tools/types.ts';
 import { ShadowGit } from '../undo/shadow-git.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -31,6 +42,19 @@ export interface CreateSessionOptions {
   /** Disables undo snapshots. */
   noUndo?: boolean;
   maxSteps?: number;
+  /**
+   * Tools contributed from outside core - MCP servers today, subagents next.
+   * They are appended to the built-ins and go through the same gate: core knows
+   * nothing about where they came from, which is what keeps `packages/mcp`
+   * depending on core rather than the other way round.
+   */
+  extraTools?: Tool<never>[];
+  /** Additional problems to surface before the first turn, e.g. a server that failed. */
+  problems?: string[];
+  /** Torn down with the session, so a spawned server does not outlive it. */
+  onDispose?: () => Promise<void> | void;
+  /** Skips skill and slash-command discovery, for tests and one-shot runs. */
+  noExtensions?: boolean;
 }
 
 export interface CreatedSession {
@@ -40,6 +64,10 @@ export interface CreatedSession {
   problems: string[];
   /** Number of messages replayed from a resumed transcript. */
   resumed: number;
+  /** Discovered skills, for `/skills` and for explaining what is loaded. */
+  skills: Skill[];
+  /** User-defined slash commands, expanded into prompts by the TUI. */
+  commands: SlashCommand[];
   /** Installs the approval callback; the TUI can only build one after it mounts. */
   installPrompt(prompt: PermissionPrompt): void;
   installAsk(ask: (question: string, options?: string[]) => Promise<string>): void;
@@ -84,7 +112,9 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   });
   const modelRef = `${resolved.provider.id}/${resolved.model.id}`;
 
-  const system = await buildSystemPrompt({ cwd: options.cwd, mode, model: modelRef });
+  const discovered = options.noExtensions
+    ? { skills: [], commands: [], problems: [] }
+    : await discoverExtensions(options.cwd);
 
   let store: SessionStore | undefined;
   let replayed: ReturnType<typeof messagesOf> = [];
@@ -104,9 +134,40 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     }).catch(() => undefined);
   }
 
+  const loadedHooks = options.noExtensions
+    ? { hooks: [], problems: [] }
+    : await loadHooks(options.cwd);
+  const hooks = new HookRunner(loadedHooks.hooks, {
+    cwd: options.cwd,
+    env: process.env,
+    sessionId: store?.id ?? 'ephemeral',
+    ...(store ? { transcriptPath: store.path } : {}),
+  });
+
+  // Built after the session id exists, because a SessionStart hook is told which
+  // session it is running for, and its context goes into the prompt it starts.
+  const started = hooks.has('SessionStart') ? await hooks.sessionStart() : undefined;
+  const system = await buildSystemPrompt({
+    cwd: options.cwd,
+    mode,
+    model: modelRef,
+    skills: renderSkillIndex(discovered.skills),
+    ...(started?.context.length
+      ? { extra: `<session-start>\n${started.context.join('\n\n')}\n</session-start>` }
+      : {}),
+  });
+
   const shadow = options.noUndo
     ? undefined
     : await ShadowGit.open(options.cwd).catch(() => undefined);
+
+  // The skill tool only exists when there is something to load: a tool whose
+  // every argument is invalid is one the model wastes a call discovering.
+  const sessionTools: Tool<never>[] = [
+    ...(BUILTIN_TOOLS as Tool<never>[]),
+    ...(discovered.skills.length ? [skillTool(discovered.skills) as unknown as Tool<never>] : []),
+    ...(options.extraTools ?? []),
+  ];
 
   const agentOptions: AgentOptions = {
     registry,
@@ -118,6 +179,8 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(options.prompt ? { prompt: options.prompt } : {}),
     ...(options.ask ? { ask: options.ask } : {}),
     ...(options.maxSteps !== undefined ? { maxSteps: options.maxSteps } : {}),
+    ...(sessionTools.length > BUILTIN_TOOLS.length ? { tools: sessionTools } : {}),
+    ...(hooks.isEmpty ? {} : { hooks }),
     ...(shadow ? { shadow } : {}),
     ...(store ? { onMessage: (message) => void store?.appendMessage(message) } : {}),
     ...(store
@@ -153,8 +216,16 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   return {
     agent,
     ...(store ? { store } : {}),
-    problems: settings.problems,
+    problems: [
+      ...settings.problems,
+      ...discovered.problems,
+      ...loadedHooks.problems,
+      ...(started?.problems ?? []),
+      ...(options.problems ?? []),
+    ],
     resumed: replayed.length,
+    skills: discovered.skills,
+    commands: discovered.commands,
     installPrompt: (prompt) => agent.setPrompt(prompt),
     installAsk: (ask) => agent.setAsk(ask),
     branch,
@@ -201,7 +272,11 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     },
     async dispose() {
       agent.dispose();
+      // Best effort: a SessionEnd hook that fails must not stop the session from
+      // closing, and nothing can act on its answer by this point anyway.
+      if (hooks.has('SessionEnd')) await hooks.sessionEnd().catch(() => undefined);
       await store?.flush();
+      await options.onDispose?.();
     },
   };
 }
@@ -212,8 +287,22 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
  * Called after a memory is captured or deleted, so a preference takes effect on
  * the next model call rather than the next session.
  */
-export async function refreshSystemPrompt(agent: Agent, model: string): Promise<void> {
-  agent.setSystem(await buildSystemPrompt({ cwd: agent.cwd, mode: agent.permissionMode, model }));
+export async function refreshSystemPrompt(
+  agent: Agent,
+  model: string,
+  skills: Skill[] = [],
+): Promise<void> {
+  agent.setSystem(
+    await buildSystemPrompt({
+      cwd: agent.cwd,
+      mode: agent.permissionMode,
+      model,
+      // Rebuilt from the same list rather than re-discovered: a skill added mid
+      // session is not loaded until the next one, and a prompt that silently
+      // gained an entry would be harder to explain than one that did not.
+      skills: renderSkillIndex(skills),
+    }),
+  );
 }
 
 async function resolveResumePath(options: CreateSessionOptions): Promise<string | undefined> {

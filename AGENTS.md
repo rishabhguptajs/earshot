@@ -9,7 +9,9 @@ A terminal coding agent that actually listens. TypeScript, ESM, Node >= 22 and B
   types in `src/types.ts`.
 - `packages/core` - agent loop (`agent.ts`), tools (`tools/`), permissions
   (`permissions/`), sessions (`session/`), undo (`undo/`), context (`context/`).
-- `packages/mcp` - MCP client manager.
+- `packages/mcp` - MCP client manager. Depends on `core`, never the reverse:
+  tools reach a session through `createSession({ extraTools })`, so core does not
+  know MCP exists.
 - `packages/tui` - Ink app. Completed turns go into `Static`; only the live region
   re-renders.
 - `packages/cli` - the `earshot` binary; the only publishable package.
@@ -38,6 +40,15 @@ A terminal coding agent that actually listens. TypeScript, ESM, Node >= 22 and B
   on Windows.
 - **`bash` is Git Bash on Windows, never PowerShell.** One shell dialect keeps
   commands and permission rules portable.
+- **Nothing loaded from a file may grant a permission.** A skill, a hook and an
+  MCP server can each say what should happen; none of them can approve it. A
+  hook's `"decision": "approve"` is read, reported and ignored, `allowed-tools`
+  intersects rather than unions, and an MCP tool is never `readOnly` whatever
+  its `readOnlyHint` claims. Settings files travel with repositories; a feature
+  that lets one of them approve is a repository granting itself rights.
+- **A subagent shares the parent's `ScopeContract` object**, not a copy, and
+  spends onto the parent's cost total. Either as a copy would be a way out of
+  the contract the parent declared.
 
 ## Conventions
 

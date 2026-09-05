@@ -6,11 +6,11 @@
 ## Synopsis
 
 ```
-earshot [flags]                   start the interactive TUI      (planned)
+earshot [flags]                   start the interactive TUI
 earshot -p "<prompt>" [flags]     one headless turn
 earshot models [filter] [flags]   list the model catalog
-earshot auth <login|list>         manage credentials             (planned)
-earshot mcp <list|add>            manage MCP servers             (planned)
+earshot auth <login|list|logout>  manage credentials
+earshot mcp <list|trust|untrust>  manage MCP servers
 earshot config <get|set>          read and write config          (planned)
 earshot acp                       run as an ACP server           (planned)
 earshot doctor                    diagnose the local setup       (planned)
@@ -42,13 +42,37 @@ earshot -p "hello" --output-format json
 **Output formats**
 
 - `text` — response text streamed to stdout as it arrives
-- `json` — one object at the end: `text`, `model`, `usage`, `costUsd`
-- `stream-json` — newline-delimited events as they arrive, for piping
+- `json` — one `result` object at the end
+- `stream-json` — newline-delimited records as they arrive, ending with the same
+  `result` object
+
+Both JSON formats are a versioned contract; see [Headless output](headless.md)
+for the schema and what `earshot.v1` promises. `json@v1` pins it explicitly.
 
 `Ctrl-C` aborts the request; partial output is kept.
 
-> **No tools.** `-p` currently makes one model call. It cannot read or edit
-> files. The tool-calling loop arrives in M2.
+## `earshot auth`
+
+```bash
+earshot auth list                              # where each provider's credentials come from
+earshot auth login openrouter                  # PKCE sign-in in a browser
+earshot auth login groq --api-key gsk_...      # store a key
+earshot auth logout groq                       # forget the stored one
+```
+
+`logout` removes what is in `auth.json`. An environment variable still applies
+afterwards, and it says so.
+
+## `earshot mcp`
+
+```bash
+earshot mcp list             # configured servers; starts nothing
+earshot mcp trust helper     # let a project-scope server start
+earshot mcp untrust helper
+```
+
+See [Extending earshot](extending.md#mcp-servers) for why a project-scope server
+needs trusting and a global one does not.
 
 ## `earshot models`
 
@@ -92,6 +116,12 @@ Typed at the prompt during an interactive session.
 | Command | Effect |
 |---|---|
 | `/mode <plan\|ask\|accept-edits\|auto\|yolo>` | Change the permission mode |
+| `/plan <task>` | Draft a plan in plan mode and write it to a file |
+| `/plan edit` | Open the plan in `$VISUAL`/`$EDITOR`, or print its path |
+| `/plan approve` | Pin the plan **as the file now reads** for the rest of the run |
+| `/plan show` / `/plan clear` | Read it back / unpin it |
+| `/skills` | List discovered skills and user-defined commands |
+| `/<name>` | Run a user-defined command from `.earshot/commands/<name>.md` |
 | `/memory` | List remembered preferences, each with the sentence it came from |
 | `/memory forget <id>` | Delete one |
 | `/tree` | List this session's prompts, numbered |

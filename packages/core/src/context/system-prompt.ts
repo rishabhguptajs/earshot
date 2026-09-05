@@ -12,6 +12,8 @@ export interface SystemPromptOptions {
   memory?: string;
   /** Rendered instead of being read from disk, in tests. */
   preferences?: string;
+  /** The skill index: what exists and what each is for, never the bodies. */
+  skills?: string;
   extra?: string;
 }
 
@@ -37,6 +39,11 @@ Ask rather than guess when the answer would change what you build. Use the
 ask_user tool for that. Do not use it for choices with an obvious default, or for
 permission to act - permission is handled by the harness, not by you. A question
 costs one round trip; the wrong assumption costs the whole task.
+
+Say why before you act. One line, immediately before each batch of tool calls,
+naming what you are about to do and what you expect to find or change. One line
+is the budget - it exists so the user can catch a wrong turn after one line of
+output instead of forty, and a paragraph does not do that.
 
 Read before you change. Every edit must be to a file you have read this session,
 and \`find\` strings must match the file exactly, including indentation.
@@ -66,6 +73,7 @@ export async function buildSystemPrompt(options: SystemPromptOptions): Promise<s
     `<environment>\nWorking directory: ${options.cwd}\nPlatform: ${platform()}\nModel: ${options.model}\n</environment>`,
     memory,
     preferences,
+    options.skills ?? '',
     options.extra ?? '',
   ];
   return sections.filter((section) => section.trim() !== '').join('\n\n');

@@ -2,6 +2,7 @@ export * from './auth.ts';
 export * from './builtin.ts';
 export * from './catalog/index.ts';
 export * from './errors.ts';
+export * from './oauth/index.ts';
 export * from './paths.ts';
 export * from './registry.ts';
 export * from './types.ts';

@@ -31,7 +31,9 @@ export const SUPPORTED_PROVIDERS: SupportedProvider[] = [
   { id: 'azure', catalogId: 'azure', api: 'azure-openai' },
 
   // --- OpenAI-compatible vendors: a base URL and an env var, nothing more ---
-  { id: 'openrouter', catalogId: 'openrouter', api: 'openai-completions' },
+  // OpenRouter publishes a PKCE flow for third-party apps: `earshot auth login
+  // openrouter` uses it, and an API key still works exactly as before.
+  { id: 'openrouter', catalogId: 'openrouter', api: 'openai-completions', auth: 'oauth' },
   {
     id: 'groq',
     catalogId: 'groq',

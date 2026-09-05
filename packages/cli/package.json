@@ -16,6 +16,8 @@
     "@ai-sdk/openai": "^4.0.57",
     "@ai-sdk/openai-compatible": "^3.0.43",
     "@ai-sdk/provider": "^4.0.10",
+    "@earshot/mcp": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "ink": "^6",
     "react": "^19"
   },

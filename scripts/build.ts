@@ -11,6 +11,12 @@ const EXTERNAL = [
   '@ai-sdk/*',
   'ai',
   'zod',
+  // The MCP SDK pulls in a server framework, an HTTP stack and zod for parts
+  // earshot never touches. Bundling it inlines what tree-shaking keeps and
+  // leaves its peer imports dangling at runtime; installed, npm resolves its
+  // own dependency tree and the client works.
+  '@modelcontextprotocol/sdk',
+  '@modelcontextprotocol/sdk/*',
   // Ink ships a WASM layout engine and statically imports react-devtools-core
   // from a module it only loads when DEV is set. Neither survives bundling, so
   // the renderer and React stay real dependencies.
