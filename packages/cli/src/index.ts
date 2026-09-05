@@ -1,5 +1,6 @@
 import { VERSION } from '@earshot/core';
 import { parseArgs } from './args.ts';
+import { authCommand } from './commands/auth.ts';
 import { headlessCommand } from './commands/headless.ts';
 import { interactiveCommand } from './commands/interactive.ts';
 import { mcpCommand } from './commands/mcp.ts';
@@ -10,7 +11,7 @@ const HELP = `earshot ${VERSION} - a terminal coding agent that actually listens
 Usage
   earshot                      start the interactive TUI
   earshot -p "<prompt>"        headless: print the final response
-  earshot auth <login|list>    manage provider credentials
+  earshot auth <login|list|logout>  manage provider credentials
   earshot models [--refresh]   list or refresh the model catalog
   earshot mcp <list|trust>     manage MCP servers
   earshot doctor               diagnose the local setup
@@ -44,6 +45,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   if (command === 'models') return modelsCommand(args);
   if (command === 'mcp') return mcpCommand(args);
+  if (command === 'auth') return authCommand(args);
   if (command) {
     process.stderr.write(`earshot: "${command}" is not implemented yet\n`);
     return 1;

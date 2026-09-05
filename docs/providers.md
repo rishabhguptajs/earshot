@@ -92,8 +92,25 @@ runtime. [Architecture](architecture.md#provider-quirks) covers how each is hand
 | Anthropic | History is append-only; edited history with thinking blocks is rejected | The transcript never mutates; compaction appends |
 | OpenAI | Reasoning must be replayed as encrypted content | Reasoning metadata is persisted verbatim |
 | Gemini 3 | `thought_signature` must round-trip on function-call parts | Same mechanism |
-| Ollama | The OpenAI-compatible `/v1` drops tool calls when streaming | Flagged on the provider; native adapter planned |
+| Ollama | The OpenAI-compatible `/v1` drops tool calls when streaming | earshot uses Ollama's own `/api/chat` instead, the one hand-written adapter |
 | LM Studio | No streaming tool calls | Flagged; buffered fallback planned |
+
+## Signing in
+
+Most providers take an API key, from `--api-key`, an environment variable, or
+`earshot auth login <provider> --api-key <key>`.
+
+OpenRouter also publishes a PKCE flow for third-party applications, and
+`earshot auth login openrouter` uses it: earshot binds a loopback port, sends
+you to OpenRouter in a browser, and exchanges the returned code for a key of
+your own. The URL is printed as well as opened, because over SSH or in a
+container there is no browser to open. What comes back is an ordinary
+OpenRouter key stored in `auth.json`; revoke it from your OpenRouter dashboard.
+
+`earshot auth list` shows where each provider's credentials are coming from, and
+`earshot auth logout <provider>` forgets the stored ones — it says so when an
+environment variable is still in play, since a user who thinks they logged out
+and did not is worse off than one who knows.
 
 ## Deliberately not supported
 
@@ -105,8 +122,11 @@ Not oversights — each is a decision:
   and PRs adding one will be declined.
 - **Gemini Code Assist OAuth.** Banned, and the endpoint is deprecated.
 - **GitHub Copilot subscriptions.** No official third-party inference path exists.
-- **ChatGPT sign-in for Codex models.** Legally gray rather than prohibited.
-  Planned as an isolated, clearly labelled, easily removed provider — not yet built.
+- **ChatGPT sign-in for Codex models.** Not built, and not currently planned.
+  It is the same mechanism as the entries above — a consumer subscription's
+  credentials used by a client they were not issued for — and the fact that it
+  is unlitigated rather than explicitly forbidden is not a difference earshot
+  wants to rest a feature on. Use an OpenAI API key.
 
 ## Refreshing the catalog
 

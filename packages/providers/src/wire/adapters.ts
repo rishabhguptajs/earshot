@@ -8,6 +8,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 import type { WireApi, WireContext } from '../types.ts';
 import { createAiSdkWire } from './ai-sdk.ts';
+import { ollamaNativeWire } from './ollama.ts';
 
 /**
  * Every wire adapter earshot ships. Each is a two-line binding of an AI SDK
@@ -92,4 +93,5 @@ export const ALL_WIRES: WireApi[] = [
   bedrockWire,
   vertexWire,
   azureWire,
+  ollamaNativeWire,
 ];
