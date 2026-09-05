@@ -93,6 +93,12 @@ Typed at the prompt during an interactive session.
 | Command | Effect |
 |---|---|
 | `/mode <plan\|ask\|accept-edits\|auto\|yolo>` | Change the permission mode |
+| `/plan <task>` | Draft a plan in plan mode and write it to a file |
+| `/plan edit` | Open the plan in `$VISUAL`/`$EDITOR`, or print its path |
+| `/plan approve` | Pin the plan **as the file now reads** for the rest of the run |
+| `/plan show` / `/plan clear` | Read it back / unpin it |
+| `/skills` | List discovered skills and user-defined commands |
+| `/<name>` | Run a user-defined command from `.earshot/commands/<name>.md` |
 | `/memory` | List remembered preferences, each with the sentence it came from |
 | `/memory forget <id>` | Delete one |
 | `/tree` | List this session's prompts, numbered |

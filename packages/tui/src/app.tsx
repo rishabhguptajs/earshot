@@ -14,9 +14,14 @@ import {
   expandCommand,
   isPermissionMode,
   loadMemories,
+  openInEditor,
   PERMISSION_MODES,
+  PLAN_PROMPT,
+  planPath,
+  readPlan,
   refreshSystemPrompt,
   saveMemory,
+  savePlan,
 } from '@earshot/core';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -110,9 +115,17 @@ export function App({ session, model, initialPrompt }: AppProps) {
     );
   }, [session]);
 
+  /** The mode to go back to once a plan is approved or abandoned. */
+  const modeBeforePlan = useRef<PermissionMode | undefined>(undefined);
+  /** The last thing the model said, which in plan mode is the plan itself. */
+  const lastAssistantText = useRef('');
+
   const runTurn = useCallback(
     async (prompt: string) => {
       setBusy(true);
+      // Cleared per turn: a stale answer read back as this turn's plan is worse
+      // than no plan at all.
+      lastAssistantText.current = '';
       push({ kind: 'user', id: nextId(), text: prompt });
 
       const abort = new AbortController();
@@ -125,6 +138,21 @@ export function App({ session, model, initialPrompt }: AppProps) {
             case 'text_delta':
               assistantText += event.text;
               setLive(assistantText);
+              break;
+            case 'intent':
+              // The intent itself is the assistant text already on screen just
+              // above the tool block, so only its absence is worth a line: a
+              // batch that arrived without a reason is what this exists to show.
+              if (event.text === undefined) {
+                push({
+                  kind: 'notice',
+                  id: nextId(),
+                  text: `about to run ${event.calls} tool call${
+                    event.calls === 1 ? '' : 's'
+                  } without saying why`,
+                  color: theme.warning,
+                });
+              }
               break;
             case 'tool_start':
               // The assistant's prose is flushed to scrollback before the tool
@@ -233,6 +261,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         }
       } finally {
         if (assistantText.trim() !== '') {
+          lastAssistantText.current = assistantText;
           push({ kind: 'assistant', id: nextId(), text: assistantText.trimEnd() });
         }
         setLive('');
@@ -407,6 +436,107 @@ export function App({ session, model, initialPrompt }: AppProps) {
     });
   }, [push, session]);
 
+  /**
+   * `/plan` - draft, edit, approve.
+   *
+   * The plan is a file, and approving reads it back from disk rather than using
+   * what the model wrote. That is the difference between a plan and a prompt:
+   * whatever the user changed is what gets pinned, and if they changed nothing
+   * it is still their decision that it stands.
+   */
+  const plan = useCallback(
+    async (argument?: string) => {
+      const path = planPath(session.store?.id ?? 'scratch');
+      const [verb = '', ...rest] = (argument ?? '').split(/\s+/);
+      const task = [verb, ...rest].join(' ').trim();
+
+      if (verb === 'show') {
+        const text = await readPlan(path);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: text ? `${path}\n\n${text}` : `no plan yet at ${path}`,
+        });
+        return;
+      }
+      if (verb === 'edit') {
+        const result = await openInEditor(path);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: result.message,
+          ...(result.edited ? {} : { color: theme.warning }),
+        });
+        return;
+      }
+      if (verb === 'approve') {
+        const text = await readPlan(path);
+        if (!text) {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: `there is no plan at ${path} to approve`,
+            color: theme.warning,
+          });
+          return;
+        }
+        agent.setPlan(text);
+        // Back to whatever the session was in before planning: staying in plan
+        // mode after approving one is the one thing the user certainly did not
+        // ask for.
+        const restored = modeBeforePlan.current ?? 'ask';
+        agent.setPermissionMode(restored);
+        setMode(restored);
+        modeBeforePlan.current = undefined;
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `plan approved and pinned for this run; permission mode: ${restored}`,
+        });
+        return;
+      }
+      if (verb === 'clear') {
+        agent.setPlan(undefined);
+        push({ kind: 'notice', id: nextId(), text: 'plan unpinned' });
+        return;
+      }
+      if (task === '') {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: 'usage: /plan <what you want planned>, then /plan edit, /plan approve',
+          color: theme.warning,
+        });
+        return;
+      }
+
+      modeBeforePlan.current = agent.permissionMode;
+      agent.setPermissionMode('plan');
+      setMode('plan');
+      await runTurn(`${task}\n\n${PLAN_PROMPT}`);
+
+      // Written from the last thing the model said, which in plan mode is the
+      // plan, because every mutating tool was refused.
+      const drafted = lastAssistantText.current.trim();
+      if (drafted === '') {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: 'the model produced no plan to write',
+          color: theme.warning,
+        });
+        return;
+      }
+      await savePlan(path, drafted);
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `plan written to ${path}\n/plan edit to change it, /plan approve to pin it`,
+      });
+    },
+    [agent, push, runTurn, session.store],
+  );
+
   const handleCommand = useCallback(
     (command: string) => {
       // Split once, keeping the remainder: `split(/\s+/, 2)` discards everything
@@ -457,6 +587,19 @@ export function App({ session, model, initialPrompt }: AppProps) {
         void undoLast();
         return;
       }
+      if (name === 'plan') {
+        if (busy) {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: 'finish or interrupt the current turn first (esc)',
+            color: theme.warning,
+          });
+          return;
+        }
+        void plan(argument);
+        return;
+      }
       if (name === 'skills') {
         push({
           kind: 'notice',
@@ -498,7 +641,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         color: theme.warning,
       });
     },
-    [agent, busy, exit, push, runTurn, session, sessionTree, showMemories, undoLast],
+    [agent, busy, exit, plan, push, runTurn, session, sessionTree, showMemories, undoLast],
   );
 
   const submit = useCallback(

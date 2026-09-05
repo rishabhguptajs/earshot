@@ -31,6 +31,7 @@ import {
 } from './permissions/engine.ts';
 import type { Rule } from './permissions/rules.ts';
 import { persistRule } from './permissions/settings.ts';
+import { renderPlan } from './plan/index.ts';
 import { type ScopeConcern, ScopeContract, type ScopeOptions } from './scope/index.ts';
 import { narrow } from './skills/discover.ts';
 import { BUILTIN_TOOLS, ToolRegistry } from './tools/index.ts';
@@ -64,6 +65,12 @@ export type AgentEvent =
   | { type: 'verification'; result: VerificationResult }
   | { type: 'hook'; event: HookEvent; blocked?: string; problems: string[] }
   | { type: 'subagent'; description: string; steps: number; costUsd: number }
+  /**
+   * The one-line "why" in front of a tool batch. Emitted for every batch,
+   * including one the model gave no reason for - a missing intent line is
+   * itself worth seeing, and reporting nothing would hide it.
+   */
+  | { type: 'intent'; text: string | undefined; calls: number }
   | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' }
   | { type: 'error'; error: EarshotError };
 
@@ -147,6 +154,12 @@ export class Agent {
    * honoured reads as one that was ignored.
    */
   private systemPrompt: string;
+  /**
+   * The approved plan, kept beside the system prompt rather than merged into
+   * it: the prompt is rebuilt whenever a memory changes, and a plan folded into
+   * that string would be lost the next time it was.
+   */
+  private plan: string | undefined;
   /** Pre-change hashes for the batch currently executing. */
   private batchSnapshot: SnapshotFile[] = [];
   /** Events raised while a call ran, drained by the batch loop that owns it. */
@@ -205,6 +218,22 @@ export class Agent {
 
   setSystem(system: string): void {
     this.systemPrompt = system;
+  }
+
+  /** Pins an approved plan for the rest of the run. Undefined clears it. */
+  setPlan(plan: string | undefined): void {
+    this.plan = plan?.trim() === '' ? undefined : plan;
+  }
+
+  get pinnedPlan(): string | undefined {
+    return this.plan;
+  }
+
+  /** What is actually sent as the system prompt: the prompt plus any plan. */
+  private get effectiveSystem(): string {
+    return this.plan === undefined
+      ? this.systemPrompt
+      : `${this.systemPrompt}\n\n${renderPlan(this.plan)}`;
   }
 
   get permissionMode(): PermissionMode {
@@ -325,7 +354,7 @@ export class Agent {
 
       for await (const event of this.prepareRequest(signal)) yield event;
       const messages = this.requestMessages();
-      this.lastRequestTokens = estimateTokens(messages, this.systemPrompt);
+      this.lastRequestTokens = estimateTokens(messages, this.effectiveSystem);
 
       yield { type: 'model_start', model: modelName };
 
@@ -333,7 +362,7 @@ export class Agent {
       let failed: EarshotError | undefined;
 
       for await (const event of streamModel(this.options.registry, this.options.model, {
-        system: this.systemPrompt,
+        system: this.effectiveSystem,
         messages,
         tools: this.offeredTools(),
         abortSignal: signal,
@@ -409,6 +438,8 @@ export class Agent {
         await this.append(check.message);
         continue;
       }
+
+      yield { type: 'intent', text: intentOf(assistant), calls: calls.length };
 
       const results: ToolResultPart[] = [];
       this.batchSnapshot = [];
@@ -764,11 +795,11 @@ export class Agent {
     const window = this.options.model.model.contextWindow ?? 0;
     const policy = { threshold: 0.8, keepRecentMessages: 8, ...this.options.compaction };
     const shaped = this.requestMessages();
-    if (!shouldCompact(shaped, this.systemPrompt, window, policy)) return;
+    if (!shouldCompact(shaped, this.effectiveSystem, window, policy)) return;
 
     const result = await compact({
       messages: shaped,
-      system: this.systemPrompt,
+      system: this.effectiveSystem,
       contextWindow: window,
       policy,
       todos: this.todos
@@ -785,7 +816,7 @@ export class Agent {
     const offset = this.compactionPreamble ? 1 : 0;
     this.compactedAt += Math.max(0, result.replaced - offset);
     this.compactionPreamble = result.messages[0];
-    this.lastRequestTokens = estimateTokens(this.requestMessages(), this.systemPrompt);
+    this.lastRequestTokens = estimateTokens(this.requestMessages(), this.effectiveSystem);
     // The cut is reported as a history index, not as a count of shaped
     // messages: the session layer maps it back to the entry ids the summary
     // stands in for, and those are indexed by history position.
@@ -873,7 +904,9 @@ export class Agent {
     const child = new Agent({
       ...inherited,
       system:
-        `${this.systemPrompt}\n\n<subagent>\nYou are running as a subagent for one ` +
+        // The plan travels with it: a subagent working outside the plan the user
+        // approved is the same hole as one working outside the declared scope.
+        `${this.effectiveSystem}\n\n<subagent>\nYou are running as a subagent for one ` +
         `self-contained task: ${request.description}. You cannot see the conversation that ` +
         'sent you here, and only your final message is returned - so answer in full, and ' +
         'say plainly what you could not find or could not do rather than implying success.' +
@@ -918,6 +951,26 @@ export class Agent {
     this.history.push(message);
     await this.options.onMessage?.(message);
   }
+}
+
+/**
+ * The line the model said before reaching for a tool.
+ *
+ * The first line of the text it emitted alongside the calls, not all of it: the
+ * point of the intent line is that one line of output is enough to catch a wrong
+ * turn, and a paragraph is not one line.
+ */
+function intentOf(assistant: Message): string | undefined {
+  const said = assistant.content
+    .filter((part) => part.type === 'text')
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join(' ')
+    .trim();
+  if (said === '') return undefined;
+  return said
+    .split(/\r?\n/)
+    .find((line) => line.trim() !== '')
+    ?.trim();
 }
 
 function hookEvent(event: HookEvent, outcome: HookOutcome): AgentEvent {
