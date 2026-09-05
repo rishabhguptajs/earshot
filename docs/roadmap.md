@@ -180,6 +180,51 @@ Neovim. Everything else in M6 is implemented and covered by tests.
 **Since M6:** `--max-cost` and `curiosity`, the last two behaviours
 [Listening](listening.md) described but the code did not have.
 
+## M7 — Trust at Scale ⬜
+
+Production hardening and a sustainable ecosystem after M6 has seen real use:
+
+- Stable v1 compatibility guarantees for configuration, transcripts, headless
+  output, ACP, and extension APIs. Two of those surfaces already carry a version
+  marker and an additive-within-the-version rule — `earshot.v1` on headless
+  records and ACP v1 — so for them M7 is writing the promise down and testing it,
+  not inventing it. Configuration, the transcript format and the extension API
+  have no such marker yet
+- A discoverable plugin and extension marketplace with sandboxed third-party
+  code. This is the one item M6 argues with: in-process TypeScript extensions
+  are deliberately *not* sandboxed and cannot be, which is why a project
+  extension stays inert until `earshot extensions trust` names it. A marketplace
+  therefore needs an execution boundary that does not exist today — an
+  out-of-process extension host, or distribution restricted to MCP servers —
+  and choosing it is the first design question of this item, not a detail of it
+- Signed standalone binaries, macOS notarization, and Windows code signing
+- Signed automatic updates with stable, beta, and nightly release channels
+- Crash recovery and repair tooling for interrupted or damaged sessions.
+  Sessions are append-only JSONL and history is never rewritten, so a damaged
+  session is a truncated or partial-line tail rather than a corrupt structure;
+  repair means detecting that tail and recovering the tree around it
+- Performance benchmarks and regression budgets for startup, rendering, context
+  shaping, and long-running sessions
+- A maintained live-provider compatibility matrix. This is the standing gap the
+  suite cannot close: every adapter is covered through the shared bridge with
+  scripted output, and only OpenRouter has answered live
+- Package-manager distribution through Homebrew, WinGet, Scoop, and AUR
+- Independent security audit and a refreshed threat model before v1 stability
+
+**Entry condition:** M6 has shipped and real editor/extension usage has exposed
+which interfaces deserve a long-term compatibility promise. Until then, this is
+direction rather than a frozen contract.
+
+**Entry condition not met.** M6 is feature-complete on main, but shipped means
+released and used, and neither has happened: the M5 release tag is unpushed, so
+there are no published binaries, npm package or docs site to update or sign, and
+the Windows Terminal checklist and the Zed/JetBrains/Neovim ACP checklists are
+unrecorded, so no editor or extension usage has reported back. Every item above
+that promises compatibility, signs an artifact, or distributes one is blocked on
+that release. The items that only need the code already on main — performance
+budgets, crash recovery, and writing down the contract for the surfaces that
+already have a version marker — can start now.
+
 ## Explicitly out of scope
 
 - **Subscription workarounds.** No Claude Pro/Max OAuth, no Gemini Code Assist
