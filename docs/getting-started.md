@@ -1,7 +1,8 @@
 # Getting started
 
-> earshot is pre-alpha. The provider layer works; the agent loop and TUI don't
-> exist yet. See [status](../README.md#status).
+> earshot is pre-1.0. The agent loop, terminal UI, permissions, sessions,
+> extensions, npm package and standalone binaries are built and tested. See
+> [status on GitHub](https://github.com/rishabhguptajs/earshot#status) for the remaining live QA.
 
 ## Requirements
 
@@ -14,8 +15,28 @@
 
 ### From npm
 
-Not published yet. The name is reserved for the first release; until then, build
-from source.
+```bash
+npm install --global earshot
+earshot doctor
+```
+
+The npm package requires Node 22 or newer. It does not require Bun.
+
+### Standalone binary
+
+Release assets are named for their platform:
+
+| Platform | Asset |
+|---|---|
+| macOS Apple silicon | `earshot-darwin-arm64` |
+| macOS Intel | `earshot-darwin-x64` |
+| Linux x64 | `earshot-linux-x64` |
+| Linux arm64 | `earshot-linux-arm64` |
+| Windows x64 | `earshot-windows-x64.exe` |
+
+Download the matching asset from GitHub Releases, make it executable on macOS
+or Linux (`chmod +x earshot-*`), and put it somewhere on `PATH`. The standalone
+build embeds Bun and does not require Node or Bun to be installed.
 
 ### From source
 
@@ -120,10 +141,20 @@ earshot -p "hello" --output-format json
 }
 ```
 
-> `-p` runs **one model call with no tools**. It cannot read or edit files yet.
-> That arrives with the agent loop in M2.
+`-p` uses the same agent loop and tools as the interactive UI. Permission
+requests cannot be answered interactively in headless mode, so select an
+appropriate permission mode or configure explicit rules for automation.
 
 ## Troubleshooting
+
+Start with:
+
+```bash
+earshot doctor
+```
+
+It checks the runtime, Git, the shell used for tools, writable state directories,
+settings JSON, and auth-file permissions without printing credentials.
 
 **`no credentials for Anthropic: set ANTHROPIC_API_KEY, or run earshot auth login anthropic`**
 Exit code 3. The named environment variable isn't set. (`earshot auth login`
@@ -138,7 +169,7 @@ Bedrock reached the AWS SDK, which means credentials resolved fine — you just
 need `AWS_REGION` set.
 
 **A provider misbehaves in a way not listed here**
-Likely a real bug: no provider has been tested against a live API yet. Please
+Likely a real bug. Please
 [open an issue](https://github.com/rishabhguptajs/earshot/issues/new) with the
 provider, model and full error.
 
