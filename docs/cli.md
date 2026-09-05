@@ -6,11 +6,11 @@
 ## Synopsis
 
 ```
-earshot [flags]                   start the interactive TUI      (planned)
+earshot [flags]                   start the interactive TUI
 earshot -p "<prompt>" [flags]     one headless turn
 earshot models [filter] [flags]   list the model catalog
-earshot auth <login|list>         manage credentials             (planned)
-earshot mcp <list|add>            manage MCP servers             (planned)
+earshot auth <login|list|logout>  manage credentials
+earshot mcp <list|trust|untrust>  manage MCP servers
 earshot config <get|set>          read and write config          (planned)
 earshot acp                       run as an ACP server           (planned)
 earshot doctor                    diagnose the local setup       (planned)
@@ -50,6 +50,29 @@ Both JSON formats are a versioned contract; see [Headless output](headless.md)
 for the schema and what `earshot.v1` promises. `json@v1` pins it explicitly.
 
 `Ctrl-C` aborts the request; partial output is kept.
+
+## `earshot auth`
+
+```bash
+earshot auth list                              # where each provider's credentials come from
+earshot auth login openrouter                  # PKCE sign-in in a browser
+earshot auth login groq --api-key gsk_...      # store a key
+earshot auth logout groq                       # forget the stored one
+```
+
+`logout` removes what is in `auth.json`. An environment variable still applies
+afterwards, and it says so.
+
+## `earshot mcp`
+
+```bash
+earshot mcp list             # configured servers; starts nothing
+earshot mcp trust helper     # let a project-scope server start
+earshot mcp untrust helper
+```
+
+See [Extending earshot](extending.md#mcp-servers) for why a project-scope server
+needs trusting and a global one does not.
 
 ## `earshot models`
 

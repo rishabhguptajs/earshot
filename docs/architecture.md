@@ -11,8 +11,8 @@ and bundled into it at build time.
 | Package | Responsibility |
 |---|---|
 | `packages/providers` | `Provider`/`WireApi` interfaces, registry, model catalog, auth store, wire adapters |
-| `packages/core` | Agent loop, tools, permissions, sessions, undo; context shapers *(planned)* |
-| `packages/mcp` | MCP client manager *(planned)* |
+| `packages/core` | Agent loop, tools, permissions, sessions, undo, context, scope, memory, verification, skills, hooks, plans |
+| `packages/mcp` | MCP client manager |
 | `packages/tui` | Ink app, inline scrollback |
 | `packages/cli` | The `earshot` binary; the only publishable package |
 
@@ -97,7 +97,7 @@ Where each known quirk is handled:
 | Anthropic append-only history | Transcript is append-only by construction; compaction writes a new entry |
 | Anthropic refusal | `finish.reason` keeps the vendor's raw value, so refusal isn't flattened into `stop` |
 | Context overflow | Detected from the message behind a generic 400 and typed as `context_overflow` |
-| Ollama drops streamed tool calls | Provider carries a `notice`; native adapter planned |
+| Ollama drops streamed tool calls | earshot uses Ollama's native `/api/chat` instead |
 
 ## Error taxonomy
 
@@ -152,7 +152,9 @@ tool call the model is still awaiting a result for.
 
 ## Tools
 
-Twelve, in [`packages/core/src/tools`](../packages/core/src/tools). Two rules
+Fourteen built in, in [`packages/core/src/tools`](../packages/core/src/tools) —
+the twelve from M2 plus `declare_scope` and `task` — with a `skill` tool added
+when a project has skills, and one tool per MCP tool a configured server offers. Two rules
 shape the rest:
 
 `defineTool` refuses to construct a mutating tool with no `permission()`. The
@@ -226,12 +228,31 @@ appends siblings of one entry rather than a chain — and session ids carry a
 time-ordered prefix, because UUIDs do not sort by creation and mtimes tie within
 a millisecond, which left `--continue` picking arbitrarily.
 
-## Context shapers *(planned — M3)*
+## Context shapers
 
 Run in order before each call, cheapest first: cap individual tool results, prune
 old tool results to one-line stubs, then auto-compact at ~80% of the model's
 window — a model-written summary plus the last K turns verbatim, open todos, and
-files touched.
+files touched. Nothing rewrites history: compaction records a cut and a preamble,
+and the request is rebuilt from those.
+
+## Extension boundaries
+
+Four places where code somebody else wrote reaches the loop — MCP servers,
+skills, slash commands and hooks — plus subagents, which are earshot's own code
+running against an untrusted plan. [Extending earshot](extending.md) documents
+each in terms of what it may *not* do; the shared rule is that none of them can
+grant a permission.
+
+Two structural consequences worth naming here:
+
+- **Core does not know MCP exists.** `packages/mcp` depends on core, tools arrive
+  through `createSession({ extraTools })`, and the dependency arrow stays
+  pointing one way.
+- **A subagent shares the parent's `ScopeContract` object**, not a copy. The
+  scope contract is the one piece of M3 that a nested agent could have quietly
+  escaped, and sharing the object is what makes that impossible rather than
+  merely discouraged.
 
 ## Design rules
 
