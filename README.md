@@ -105,7 +105,8 @@ earshot is built in milestones. Honest state of each:
 | **M3** Listening | Scope contract, compaction, memory | ✅ Done |
 | **M4** Extensibility | MCP, skills, commands, hooks, subagents | ✅ Done |
 | **M5** Ship | Docs site, npm, binaries, Windows QA | 🟨 Release acceptance |
-| **M6** v1.x | ACP, images, tool search, TypeScript extensions | ⬜ In progress |
+| **M6** v1.x | ACP, images, tool search, TypeScript extensions | 🟨 Editor QA remaining |
+| **M7** Trust at Scale | Compatibility promise, signing, marketplace, audit | ⬜ Blocked on release |
 
 **Works today:** the interactive TUI and `earshot -p`, both running the full
 agent loop; a tested stable ACP v1 server for editor clients; the permission
