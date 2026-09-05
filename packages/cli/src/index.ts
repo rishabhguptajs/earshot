@@ -11,15 +11,15 @@ const HELP = `earshot ${VERSION} - a terminal coding agent that actually listens
 Usage
   earshot                      start the interactive TUI
   earshot -p "<prompt>"        headless: print the final response
-  earshot auth <login|list|logout>  manage provider credentials
+  earshot auth <cmd>           login, list or logout provider credentials
   earshot models [--refresh]   list or refresh the model catalog
-  earshot mcp <list|trust>     manage MCP servers
+  earshot mcp <cmd>            list, trust or untrust MCP servers
   earshot doctor               diagnose the local setup
 
 Flags
   --model <provider/model>     model for this session
   --permission-mode <mode>     plan | ask | accept-edits | auto | yolo
-  --output-format <fmt>        text | json | stream-json  (with -p)
+  --output-format <fmt>        text | json | stream-json | json@v1  (with -p)
   --continue                   resume the most recent session here
   --resume [<path>]            resume a specific session transcript
   --api-key <key>              credentials for this run only
