@@ -25,6 +25,7 @@ import {
 } from '@earshot/core';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Markdown } from './components/markdown.tsx';
 import { MemoryCapture } from './components/memory-capture.tsx';
 import { PermissionPrompt } from './components/permission.tsx';
 import { QuestionPrompt } from './components/question.tsx';
@@ -694,7 +695,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
 
       {live !== '' && (
         <Box marginTop={1}>
-          <Text color={theme.assistant}>{live}</Text>
+          <Markdown text={live} />
         </Box>
       )}
       {runningTool && <ToolBlock name={runningTool} running />}
@@ -761,7 +762,7 @@ function ScrollRow({ item }: { item: ScrollItem }) {
   if (item.kind === 'assistant') {
     return (
       <Box marginTop={1}>
-        <Text color={theme.assistant}>{item.text}</Text>
+        <Markdown text={item.text} />
       </Box>
     );
   }
