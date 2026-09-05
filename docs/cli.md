@@ -8,6 +8,7 @@ earshot -p "<prompt>" [flags]     one headless turn
 earshot models [filter] [flags]   list the model catalog
 earshot auth <login|list|logout>  manage credentials
 earshot mcp <list|trust|untrust>  manage MCP servers
+earshot acp [flags]               serve editor clients over ACP v1 on stdio
 earshot doctor                    diagnose the local setup
 ```
 
@@ -68,6 +69,19 @@ earshot mcp untrust helper
 
 See [Extending earshot](extending.md#mcp-servers) for why a project-scope server
 needs trusting and a global one does not.
+
+## `earshot acp`
+
+Runs the stable ACP v1 server used by Zed and other ACP-capable editors:
+
+```bash
+earshot acp --model anthropic/claude-opus-5
+```
+
+It is a stdio protocol command, not an interactive terminal command. The model,
+API key and permission-mode flags become defaults for sessions the editor opens.
+See [Editor integration with ACP](acp.md) for the supported protocol surface and
+the reproducible Zed, JetBrains and Neovim QA checklists.
 
 ## `earshot models`
 

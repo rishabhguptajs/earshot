@@ -1,5 +1,6 @@
 import { VERSION } from '@earshot/core';
 import { parseArgs } from './args.ts';
+import { acpCommand } from './commands/acp.ts';
 import { authCommand } from './commands/auth.ts';
 import { doctorCommand } from './commands/doctor.ts';
 import { headlessCommand } from './commands/headless.ts';
@@ -15,6 +16,7 @@ Usage
   earshot auth <cmd>           login, list or logout provider credentials
   earshot models [--refresh]   list or refresh the model catalog
   earshot mcp <cmd>            list, trust or untrust MCP servers
+  earshot acp                  serve editor clients over ACP v1 on stdio
   earshot doctor               diagnose the local setup
 
 Flags
@@ -48,6 +50,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === 'mcp') return mcpCommand(args);
   if (command === 'auth') return authCommand(args);
   if (command === 'doctor') return doctorCommand(args);
+  if (command === 'acp') return acpCommand(args);
   if (command) {
     process.stderr.write(`earshot: "${command}" is not implemented yet\n`);
     return 1;

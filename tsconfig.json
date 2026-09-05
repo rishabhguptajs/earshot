@@ -4,6 +4,7 @@
     { "path": "packages/providers" },
     { "path": "packages/core" },
     { "path": "packages/mcp" },
+    { "path": "packages/acp" },
     { "path": "packages/tui" },
     { "path": "packages/cli" }
   ]

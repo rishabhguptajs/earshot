@@ -9,6 +9,12 @@ an MCP server can each tell earshot to do something, and each of those things
 goes through the same gate a request typed by the user does. What they cannot do
 is approve it.
 
+The ACP server is another consumer of these boundaries, not a bypass around
+them. An editor can display and answer a permission request, but cannot turn a
+deny into an allow. MCP servers configured for an ACP session are still loaded
+through earshot's trust and permission rules; client-provided MCP process
+definitions are currently rejected.
+
 ## MCP servers
 
 Configured under `mcpServers` in settings, in the shape Claude Code uses:
