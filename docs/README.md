@@ -9,7 +9,9 @@
 |---|---|
 | [Getting started](getting-started.md) | Install, authenticate, first run |
 | [CLI reference](cli.md) | Every command, flag and exit code |
-| [Providers](providers.md) | All 19, credential resolution, known quirks |
+| [Providers](providers.md) | All 19, credential resolution, signing in, known quirks |
+| [Extending earshot](extending.md) | MCP servers, skills, slash commands, hooks, subagents |
+| [Headless output](headless.md) | The versioned JSON contract for `-p` |
 
 ## For contributors
 
