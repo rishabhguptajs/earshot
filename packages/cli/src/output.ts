@@ -94,6 +94,13 @@ export function toStreamRecord(event: AgentEvent): StreamRecord | undefined {
         title: event.request.title,
         reason: event.reason,
       };
+    case 'intent':
+      return {
+        ...base,
+        type: 'intent',
+        calls: event.calls,
+        ...(event.text !== undefined ? { text: event.text } : {}),
+      };
     case 'usage':
       return { ...base, type: 'usage', usage: event.usage, costUsd: event.costUsd };
     case 'compacted':

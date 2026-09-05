@@ -65,6 +65,7 @@ thing.
 | `model_start` | `model` |
 | `text` | `text` (a delta, not the whole response) |
 | `reasoning` | `text` |
+| `intent` | `calls`, `text?` — the one-line "why" before a batch; `text` absent means none was given |
 | `tool_use` | `toolCallId`, `toolName`, `input` |
 | `tool_result` | `toolCallId`, `toolName`, `isError`, `output` |
 | `permission` | `tool`, `target`, `title`, `reason` |
