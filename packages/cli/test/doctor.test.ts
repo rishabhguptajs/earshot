@@ -37,6 +37,49 @@ describe('earshot doctor', () => {
     });
   });
 
+  // The shell check reads the injected platform, so this reports the Windows
+  // rule from any runner. Previously it read the host's, and the Linux test above
+  // failed on the Windows runner by looking for a Git Bash that was not there.
+  test('reports the Git Bash requirement when the host is Windows', async () => {
+    await withTempDir(async (dir) => {
+      const checks = await runDoctor({
+        cwd: dir,
+        env: {
+          EARSHOT_CONFIG_DIR: join(dir, 'config'),
+          EARSHOT_DATA_DIR: join(dir, 'data'),
+          ProgramFiles: join(dir, 'nonexistent'),
+        },
+        nodeVersion: '22.12.0',
+        platform: 'win32',
+        run: () => ({ status: 0, stdout: 'git version 2.47.0' }),
+      });
+      const shell = checks.find((check) => check.name === 'shell');
+      expect(shell?.status).toBe('fail');
+      expect(shell?.detail).toContain('Git for Windows');
+    });
+  });
+
+  test('passes the shell check on Windows when Git Bash is present', async () => {
+    await withTempDir(async (dir) => {
+      const bash = join(dir, 'bash.exe');
+      await writeFile(bash, '');
+      const checks = await runDoctor({
+        cwd: dir,
+        env: {
+          EARSHOT_CONFIG_DIR: join(dir, 'config'),
+          EARSHOT_DATA_DIR: join(dir, 'data'),
+          EARSHOT_BASH: bash,
+        },
+        nodeVersion: '22.12.0',
+        platform: 'win32',
+        run: () => ({ status: 0, stdout: 'git version 2.47.0' }),
+      });
+      const shell = checks.find((check) => check.name === 'shell');
+      expect(shell?.status).toBe('pass');
+      expect(shell?.detail).toBe(bash);
+    });
+  });
+
   test('rejects an auth file readable by other users on POSIX', async () => {
     await withTempDir(async (dir) => {
       const config = join(dir, 'config');

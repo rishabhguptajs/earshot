@@ -52,9 +52,19 @@ const WINDOWS_HELP =
 /**
  * Resolves the shell once per session. Throws rather than degrading, because a
  * silent fallback to a different shell is exactly the failure this design avoids.
+ *
+ * `hostPlatform` is a parameter rather than a direct `platform()` read so that a
+ * caller which was itself given a platform can pass the same one down. Reading
+ * the real platform here made platform-injecting tests exercise whichever branch
+ * the CI runner happened to be, not the branch they named: `/doctor`'s Linux test
+ * took the Git Bash path on the Windows runner and reported a failing shell check.
+ * It narrows nothing - Windows still means Git Bash or an error, never PowerShell.
  */
-export function resolveShell(env: NodeJS.ProcessEnv = process.env): ShellSpec {
-  if (platform() !== 'win32') {
+export function resolveShell(
+  env: NodeJS.ProcessEnv = process.env,
+  hostPlatform: NodeJS.Platform = platform(),
+): ShellSpec {
+  if (hostPlatform !== 'win32') {
     // Not `-lc`: a login shell re-runs the user's profile on every call, which is
     // slow and lets a profile's `cd` silently move the command's working directory.
     return { file: env.EARSHOT_BASH ?? '/bin/bash', args: ['-c'] };
