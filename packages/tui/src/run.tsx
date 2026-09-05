@@ -1,12 +1,12 @@
 import { platform } from 'node:os';
-import type { CreatedSession } from '@earshot/core';
+import type { CreatedSession, UserPrompt } from '@earshot/core';
 import { render } from 'ink';
 import { App } from './app.tsx';
 
 export interface RunTuiOptions {
   session: CreatedSession;
   model: string;
-  initialPrompt?: string;
+  initialPrompt?: UserPrompt;
 }
 
 /**

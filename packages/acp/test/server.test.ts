@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import * as acp from '@agentclientprotocol/sdk';
-import type { AgentEvent, CreatedSession } from '@earshot/core';
+import type { AgentEvent, CreatedSession, UserPrompt } from '@earshot/core';
 import type { Message } from '@earshot/providers';
 import { type AcpSessionFactory, createAcpApp } from '../src/index.ts';
 
@@ -13,16 +13,19 @@ function fakeSession(
   permission(): Parameters<CreatedSession['installPrompt']>[0] | undefined;
   ask(): Parameters<CreatedSession['installAsk']>[0] | undefined;
   aborted(): boolean;
+  prompts: UserPrompt[];
 } {
   let permission: Parameters<CreatedSession['installPrompt']>[0] | undefined;
   let ask: Parameters<CreatedSession['installAsk']>[0] | undefined;
   let aborted = false;
+  const prompts: UserPrompt[] = [];
   const agent = {
     history,
     costUsd: 0,
     permissionMode: 'ask',
     contextUse: { tokens: 10, window: 100 },
-    async *runTurn(_prompt: string, signal: AbortSignal) {
+    async *runTurn(prompt: UserPrompt, signal: AbortSignal) {
+      prompts.push(prompt);
       await new Promise((resolve) => setTimeout(resolve, 0));
       aborted = signal.aborted;
       for (const event of events) yield event;
@@ -60,6 +63,7 @@ function fakeSession(
     permission: () => permission,
     ask: () => ask,
     aborted: () => aborted,
+    prompts,
   };
 }
 
@@ -100,7 +104,10 @@ describe('the ACP server', () => {
     );
 
     expect(response.protocolVersion).toBe(acp.PROTOCOL_VERSION);
-    expect(response.agentCapabilities).toEqual({ loadSession: true });
+    expect(response.agentCapabilities).toEqual({
+      loadSession: true,
+      promptCapabilities: { image: true },
+    });
   });
 
   test('creates and loads persistent sessions for the requested workspace', async () => {
@@ -173,6 +180,30 @@ describe('the ACP server', () => {
       'usage_update',
     ]);
     expect(updates[3]).toMatchObject({ status: 'completed', rawOutput: 'contents' });
+  });
+
+  test('passes ACP image blocks through the unified prompt type', async () => {
+    const { app, made } = harness([{ type: 'turn_end', reason: 'stop' }]);
+    await testClient().connectWith(app, async (client) => {
+      const created = await client.request(acp.methods.agent.session.new, {
+        cwd: '/workspace/project',
+        mcpServers: [],
+      });
+      await client.request(acp.methods.agent.session.prompt, {
+        sessionId: created.sessionId,
+        prompt: [
+          { type: 'text', text: 'describe it' },
+          { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
+        ],
+      });
+    });
+
+    expect(made.prompts).toEqual([
+      [
+        { type: 'text', text: 'describe it' },
+        { type: 'image', data: 'aGVsbG8=', mediaType: 'image/png' },
+      ],
+    ]);
   });
 
   test('routes permission and ask-user requests through the client', async () => {

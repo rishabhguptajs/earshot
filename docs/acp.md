@@ -17,7 +17,7 @@ execution path.
 
 - initialization and ACP v1 capability negotiation
 - new persistent sessions and loading a session by its earshot session id
-- text and resource-link prompts
+- text, image and resource-link prompts
 - streamed assistant text and reasoning
 - tool-call start, completion, failure and result updates
 - cumulative USD cost and context-window usage updates
@@ -25,10 +25,11 @@ execution path.
 - `ask_user` through ACP form elicitation
 - cancellation of the model request, tools and pending client requests
 
-Images are not advertised yet. Client-provided MCP server definitions are also
-rejected: configure MCP servers in earshot settings, where project definitions
-remain disabled until explicitly trusted. Both are intentional boundaries of
-this first ACP slice.
+Image blocks are passed through the same unified message type used by the wire
+adapters and rejected before a provider call if the selected model has no vision
+capability. Client-provided MCP server definitions are rejected: configure MCP
+servers in earshot settings, where project definitions remain disabled until
+explicitly trusted.
 
 ## Session loading
 

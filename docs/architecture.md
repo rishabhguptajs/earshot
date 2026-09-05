@@ -40,6 +40,11 @@ API. That's what makes provider-agnostic behaviour real rather than aspirational
 switching from Anthropic to Gemini mid-session doesn't change a single type the
 loop sees.
 
+User turns use that same boundary: `Agent.runTurn()` accepts text or a sequence
+of text and image parts. CLI paths become base64 parts, HTTPS URLs remain
+references, and ACP images map without a provider-specific branch. Vision
+capability checks happen before history is appended or a provider is called.
+
 ### providerMetadata
 
 Some vendor data must survive a round trip or the *next* request fails:

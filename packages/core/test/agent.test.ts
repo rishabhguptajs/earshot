@@ -30,6 +30,57 @@ async function collect(generator: AsyncGenerator<AgentEvent>): Promise<AgentEven
 const signal = () => new AbortController().signal;
 
 describe('the loop', () => {
+  test('an image prompt reaches the model and append-only history intact', async () => {
+    const s = scripted([{ text: 'I see it' }]);
+    s.model.model.capabilities.vision = true;
+    const agent = new Agent({
+      registry: s.registry,
+      model: s.model,
+      cwd: '/workspace',
+      system: 'test system',
+      mode: 'auto',
+      rules: [],
+    });
+
+    await collect(
+      agent.runTurn(
+        [
+          { type: 'text', text: 'describe this' },
+          { type: 'image', data: 'aGVsbG8=', mediaType: 'image/png' },
+        ],
+        signal(),
+      ),
+    );
+
+    expect(s.requests[0]?.messages[0]?.content).toEqual([
+      { type: 'text', text: 'describe this' },
+      { type: 'image', data: 'aGVsbG8=', mediaType: 'image/png' },
+    ]);
+    expect(agent.history[0]).toEqual(s.requests[0]?.messages[0]);
+  });
+
+  test('an image is rejected before history when the model has no vision', async () => {
+    const s = scripted([{ text: 'should not run' }]);
+    const agent = new Agent({
+      registry: s.registry,
+      model: s.model,
+      cwd: '/workspace',
+      system: 'test system',
+      mode: 'auto',
+      rules: [],
+    });
+    const events = await collect(
+      agent.runTurn([{ type: 'image', data: 'aGVsbG8=', mediaType: 'image/png' }], signal()),
+    );
+
+    expect(events).toContainEqual({
+      type: 'error',
+      error: expect.objectContaining({ kind: 'invalid_request' }),
+    });
+    expect(agent.history).toEqual([]);
+    expect(s.requests).toEqual([]);
+  });
+
   test('a turn with no tool calls ends after one model call', async () => {
     await withTempDir(async (dir) => {
       const { agent, requests } = agentFor([{ text: 'done' }], dir);

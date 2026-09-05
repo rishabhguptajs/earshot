@@ -40,7 +40,7 @@ export function createAcpApp(options: AcpServerOptions): acp.AgentApp {
     .agent({ name: 'earshot' })
     .onRequest(acp.methods.agent.initialize, () => ({
       protocolVersion: acp.PROTOCOL_VERSION,
-      agentCapabilities: { loadSession: true },
+      agentCapabilities: { loadSession: true, promptCapabilities: { image: true } },
       agentInfo: { name: 'earshot', version: VERSION },
     }))
     .onRequest(acp.methods.agent.session.new, async (ctx) => {
@@ -213,14 +213,17 @@ function promptChoice(optionId: string): PromptChoice {
   return { kind: 'deny' };
 }
 
-function promptText(blocks: acp.ContentBlock[]): string {
-  return blocks
-    .map((block) => {
-      if (block.type === 'text') return block.text;
-      if (block.type === 'resource_link') return `[${block.name}](${block.uri})`;
-      throw new Error(`ACP prompt content "${block.type}" is not supported yet`);
-    })
-    .join('\n\n');
+function promptText(blocks: acp.ContentBlock[]): import('@earshot/core').UserPromptPart[] {
+  return blocks.map((block) => {
+    if (block.type === 'text') return { type: 'text' as const, text: block.text };
+    if (block.type === 'image') {
+      return { type: 'image' as const, data: block.data, mediaType: block.mimeType };
+    }
+    if (block.type === 'resource_link') {
+      return { type: 'text' as const, text: `[${block.name}](${block.uri})` };
+    }
+    throw new Error(`ACP prompt content "${block.type}" is not supported yet`);
+  });
 }
 
 async function replayHistory(

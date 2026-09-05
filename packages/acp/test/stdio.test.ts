@@ -33,6 +33,9 @@ describe('earshot acp over stdio', () => {
 
     expect(response.id).toBe(1);
     expect(response.result.protocolVersion).toBe(1);
-    expect(response.result.agentCapabilities).toEqual({ loadSession: true });
+    expect(response.result.agentCapabilities).toEqual({
+      loadSession: true,
+      promptCapabilities: { image: true },
+    });
   });
 });
