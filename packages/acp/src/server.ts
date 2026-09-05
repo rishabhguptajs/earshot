@@ -246,9 +246,14 @@ async function replayHistory(
   }
 }
 
-function stopReasonOf(reason: 'stop' | 'aborted' | 'max_steps' | 'error'): acp.StopReason {
+function stopReasonOf(
+  reason: 'stop' | 'aborted' | 'max_steps' | 'error' | 'budget',
+): acp.StopReason {
   if (reason === 'aborted') return 'cancelled';
   if (reason === 'max_steps') return 'max_turn_requests';
+  // A budget stop is a configured limit, not the model declining: `refusal`
+  // would tell the editor the wrong thing about who stopped and why.
+  if (reason === 'budget') return 'max_turn_requests';
   return 'end_turn';
 }
 

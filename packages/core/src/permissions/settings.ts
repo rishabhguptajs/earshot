@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { configDir } from '@earshot/providers';
+import { type Curiosity, isCuriosity } from '../context/system-prompt.ts';
 import { isPermissionMode, type PermissionMode } from './engine.ts';
 import { parseRule, type Rule, type RuleScope, RuleSyntaxError } from './rules.ts';
 
@@ -11,12 +12,18 @@ export interface SettingsFile {
     ask?: string[];
     defaultMode?: string;
   };
+  curiosity?: string;
+  /** Session budget in USD. A turn stops and asks before spending past it. */
+  maxCostUsd?: number;
 }
 
 export interface LoadedSettings {
   rules: Rule[];
   /** From the narrowest scope that sets one. */
   defaultMode?: PermissionMode;
+  /** Preferences, like `defaultMode`: the narrowest scope that sets one wins. */
+  curiosity?: Curiosity;
+  maxCostUsd?: number;
   /** Rules that failed to parse, reported rather than silently dropped. */
   problems: string[];
 }
@@ -54,6 +61,8 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
   const rules: Rule[] = [];
   const problems: string[] = [];
   let defaultMode: PermissionMode | undefined;
+  let curiosity: Curiosity | undefined;
+  let maxCostUsd: number | undefined;
 
   for (const scope of scopes) {
     const path = settingsPath(scope, cwd);
@@ -61,7 +70,26 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
       problems.push(error.message);
       return undefined;
     });
-    if (!file?.permissions) continue;
+    if (!file) continue;
+
+    if (file.curiosity !== undefined) {
+      if (isCuriosity(file.curiosity)) curiosity = file.curiosity;
+      else problems.push(`${path}: "${file.curiosity}" is not a curiosity level`);
+    }
+
+    if (file.maxCostUsd !== undefined) {
+      if (
+        typeof file.maxCostUsd === 'number' &&
+        Number.isFinite(file.maxCostUsd) &&
+        file.maxCostUsd > 0
+      ) {
+        maxCostUsd = file.maxCostUsd;
+      } else {
+        problems.push(`${path}: "maxCostUsd" must be a positive number of dollars`);
+      }
+    }
+
+    if (!file.permissions) continue;
 
     // Deny rules are collected first within each scope so an explanation names
     // the deny rule rather than a coincidentally earlier allow rule.
@@ -90,7 +118,13 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
   // Deny rules sort ahead of the rest so `firstDeny` and the explanations it
   // produces are stable regardless of which scope contributed what.
   rules.sort((a, b) => Number(b.effect === 'deny') - Number(a.effect === 'deny'));
-  return { rules, ...(defaultMode ? { defaultMode } : {}), problems };
+  return {
+    rules,
+    ...(defaultMode ? { defaultMode } : {}),
+    ...(curiosity ? { curiosity } : {}),
+    ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    problems,
+  };
 }
 
 /**

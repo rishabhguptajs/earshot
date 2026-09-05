@@ -65,7 +65,7 @@ export interface SubagentResult {
   steps: number;
   costUsd: number;
   /** Set when it stopped for a reason other than finishing. */
-  stoppedBecause?: 'aborted' | 'max_steps' | 'error';
+  stoppedBecause?: 'aborted' | 'max_steps' | 'error' | 'budget';
 }
 
 export interface TodoItem {

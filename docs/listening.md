@@ -26,7 +26,11 @@ paragraph of prompt text and hope.
 
 When two readings of a request lead to materially different work, ask first —
 2–4 concrete options, not an open question. Implemented as an `ask_user` tool plus
-a system-prompt policy. Configurable: `curiosity: low | normal | high`.
+a system-prompt policy. `curiosity: low | normal | high` moves the threshold —
+`--curiosity`, or `curiosity` in settings. It moves that one threshold and
+nothing else: no level turns asking off, because a question the agent cannot ask
+becomes a guess you pay for, and no level makes asking free, because a prompt
+for something with an obvious default is its own failure.
 
 The failure this prevents: twenty minutes of confident work in the wrong direction.
 
@@ -99,8 +103,11 @@ consume another vendor's reasoning.
 ### 10. Cost and context transparency
 
 The status line always shows context percentage and session cost. `--max-cost`
-and a per-session budget prompt before overrun. Cost is computed from catalog
-pricing including cache reads and writes.
+(or `maxCostUsd` in settings) sets a session ceiling, checked before each model
+call rather than after — stopping once the money is gone is not a budget, it is
+a receipt. Reaching it prompts to stop, raise the ceiling, or remove it; a
+headless run stops and exits 3, because it has no terminal to ask. Cost is
+computed from catalog pricing including cache reads and writes.
 
 ### 11. Trust levels, not nagging
 
