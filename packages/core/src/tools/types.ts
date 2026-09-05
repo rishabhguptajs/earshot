@@ -32,10 +32,40 @@ export interface ToolContext {
   jobs: BackgroundJobs;
   /** What the agent declared it would change, and the guard that holds it to it. */
   scope: ScopeContract;
+  /**
+   * Runs a nested agent with its own context window and returns its answer. It
+   * inherits the session's permission rules, scope contract and cost; absent
+   * when the session cannot nest one, which includes inside a subagent.
+   */
+  runSubagent?(request: SubagentRequest, signal: AbortSignal): Promise<SubagentResult>;
+  /**
+   * Narrows the tools offered to the model for the rest of the turn. Only ever
+   * a restriction: the names are intersected with what the session already
+   * allows, so nothing here can grant a tool the user did not.
+   */
+  restrictTools?(names: string[] | undefined): void;
   /** Records that a file was read, so `edit`/`write` can require a prior read. */
   markRead(path: string): void;
   hasRead(path: string): boolean;
   env: NodeJS.ProcessEnv;
+}
+
+export interface SubagentRequest {
+  /** One line naming the sub-task, for the prompt and the transcript. */
+  description: string;
+  /** The whole task: a subagent sees none of the parent's conversation. */
+  prompt: string;
+  /** Tools it may use. Intersected with the parent's; never a superset. */
+  tools?: string[];
+}
+
+export interface SubagentResult {
+  /** What it answered. The parent gets this, never the subagent's transcript. */
+  text: string;
+  steps: number;
+  costUsd: number;
+  /** Set when it stopped for a reason other than finishing. */
+  stoppedBecause?: 'aborted' | 'max_steps' | 'error';
 }
 
 export interface TodoItem {

@@ -89,12 +89,41 @@ which move to M4 with the rest of the command surface. Curiosity levels and
 been driven by a human in a real terminal — only mounted against a fake stdout
 in tests.
 
-## M4 — Extensibility ⬜
+## M4 — Extensibility ✅
 
-Agent Skills (`SKILL.md`), slash commands, hooks with a Claude-Code-compatible
-JSON contract, MCP client (stdio + streamable HTTP), subagents, headless JSON
-output, OAuth flows (OpenRouter PKCE, ChatGPT sign-in), and the remaining
-providers.
+The milestone where earshot stops being a closed program. Everything in it is a
+contract with code somebody else wrote, so each boundary is documented by what it
+is *not* allowed to do. See [Extending earshot](extending.md).
+
+- **MCP client** — stdio and streamable HTTP, tools namespaced `server__tool` and
+  put through the same gate as built-ins. An MCP tool is never read-only whatever
+  the server claims about itself, and a stdio server a project checked in does
+  not start until `earshot mcp trust` says so
+- **Skills and slash commands** — discovered from the project and the config
+  directory. A skill contributes instructions and nothing else; `allowed-tools`
+  intersects with the session's tools and can only narrow them
+- **Hooks** — Claude Code's JSON contract, with one deliberate incompatibility: a
+  hook may deny or downgrade an allow to a prompt, never approve. A hook that
+  fails, times out or prints garbage blocks nothing
+- **Subagents** — a nested agent with its own context window, inheriting the
+  permission rules, the declared scope, the approved plan and the cost total, and
+  returning an answer rather than a transcript
+- **Headless JSON** — `earshot.v1` on every record, additive within the version,
+  a new major requested by name. See [Headless output](headless.md)
+- **`/plan`** — a plan file you edit in `$EDITOR` and approve; what is pinned is
+  what the file says, not what the model wrote
+- **Intent line** — a one-line "why" before every tool batch, as an event, so a
+  batch that arrived without one is visible rather than merely undesirable
+- **OpenRouter PKCE sign-in**, and Ollama's native `/api/chat` adapter, which
+  keeps tool calls that the OpenAI-compatible endpoint drops
+
+**Not done in M4:** ChatGPT sign-in for Codex models, which moved from "planned"
+to "deliberately not supported" — see
+[Providers](providers.md#deliberately-not-supported). Curiosity levels and
+`--max-cost` are still unimplemented.
+
+**Caveat:** still not verified against a live API, no MCP server has been spawned
+for real, and the TUI has still never been driven by a human in a real terminal.
 
 ## M5 — Ship ⬜
 

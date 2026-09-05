@@ -8,6 +8,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@earshot/core": "workspace:*"
+    "@earshot/core": "workspace:*",
+    "@earshot/providers": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.30.0"
   }
 }

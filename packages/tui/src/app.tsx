@@ -11,11 +11,17 @@ import type {
 import {
   deleteMemory,
   detectPreference,
+  expandCommand,
   isPermissionMode,
   loadMemories,
+  openInEditor,
   PERMISSION_MODES,
+  PLAN_PROMPT,
+  planPath,
+  readPlan,
   refreshSystemPrompt,
   saveMemory,
+  savePlan,
 } from '@earshot/core';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -109,9 +115,17 @@ export function App({ session, model, initialPrompt }: AppProps) {
     );
   }, [session]);
 
+  /** The mode to go back to once a plan is approved or abandoned. */
+  const modeBeforePlan = useRef<PermissionMode | undefined>(undefined);
+  /** The last thing the model said, which in plan mode is the plan itself. */
+  const lastAssistantText = useRef('');
+
   const runTurn = useCallback(
     async (prompt: string) => {
       setBusy(true);
+      // Cleared per turn: a stale answer read back as this turn's plan is worse
+      // than no plan at all.
+      lastAssistantText.current = '';
       push({ kind: 'user', id: nextId(), text: prompt });
 
       const abort = new AbortController();
@@ -124,6 +138,21 @@ export function App({ session, model, initialPrompt }: AppProps) {
             case 'text_delta':
               assistantText += event.text;
               setLive(assistantText);
+              break;
+            case 'intent':
+              // The intent itself is the assistant text already on screen just
+              // above the tool block, so only its absence is worth a line: a
+              // batch that arrived without a reason is what this exists to show.
+              if (event.text === undefined) {
+                push({
+                  kind: 'notice',
+                  id: nextId(),
+                  text: `about to run ${event.calls} tool call${
+                    event.calls === 1 ? '' : 's'
+                  } without saying why`,
+                  color: theme.warning,
+                });
+              }
               break;
             case 'tool_start':
               // The assistant's prose is flushed to scrollback before the tool
@@ -164,6 +193,32 @@ export function App({ session, model, initialPrompt }: AppProps) {
                 output: event.result.output,
                 ...(event.result.exitCode === 0 ? {} : { isError: true }),
               });
+              break;
+            case 'subagent':
+              push({
+                kind: 'notice',
+                id: nextId(),
+                text: `subagent "${event.description}": ${event.steps} step${
+                  event.steps === 1 ? '' : 's'
+                }, $${event.costUsd.toFixed(4)}`,
+              });
+              break;
+            case 'hook':
+              // A hook that blocked something is the reason the agent did not do
+              // it, so it is said out loud rather than left for the model to
+              // paraphrase. Problems are shown too: a hook that failed silently
+              // is one the user goes on believing is protecting them.
+              if (event.blocked) {
+                push({
+                  kind: 'notice',
+                  id: nextId(),
+                  text: `${event.event} hook blocked this: ${event.blocked}`,
+                  color: theme.warning,
+                });
+              }
+              for (const problem of event.problems) {
+                push({ kind: 'notice', id: nextId(), text: problem, color: theme.warning });
+              }
               break;
             case 'compacted':
               setCompacted((count) => count + event.replaced);
@@ -206,6 +261,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         }
       } finally {
         if (assistantText.trim() !== '') {
+          lastAssistantText.current = assistantText;
           push({ kind: 'assistant', id: nextId(), text: assistantText.trimEnd() });
         }
         setLive('');
@@ -236,7 +292,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
       const id = rest.join(' ').trim();
       if (verb === 'forget' && id) {
         const gone = await deleteMemory(id, agent.cwd);
-        if (gone) await refreshSystemPrompt(agent, model);
+        if (gone) await refreshSystemPrompt(agent, model, session.skills);
         push({
           kind: 'notice',
           id: nextId(),
@@ -262,7 +318,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         text: `${lines.join('\n')}\n\n  /memory forget <id> removes one`,
       });
     },
-    [agent, model, push],
+    [agent, model, push, session.skills],
   );
 
   const remember = useCallback(
@@ -275,14 +331,14 @@ export function App({ session, model, initialPrompt }: AppProps) {
         return;
       }
       // Applied from the next model call, not the next session.
-      await refreshSystemPrompt(agent, model);
+      await refreshSystemPrompt(agent, model, session.skills);
       push({
         kind: 'notice',
         id: nextId(),
         text: `remembered [${saved.id}] (${scope}) - /memory to review or forget it`,
       });
     },
-    [agent, candidate, model, push],
+    [agent, candidate, model, push, session.skills],
   );
 
   /**
@@ -380,6 +436,107 @@ export function App({ session, model, initialPrompt }: AppProps) {
     });
   }, [push, session]);
 
+  /**
+   * `/plan` - draft, edit, approve.
+   *
+   * The plan is a file, and approving reads it back from disk rather than using
+   * what the model wrote. That is the difference between a plan and a prompt:
+   * whatever the user changed is what gets pinned, and if they changed nothing
+   * it is still their decision that it stands.
+   */
+  const plan = useCallback(
+    async (argument?: string) => {
+      const path = planPath(session.store?.id ?? 'scratch');
+      const [verb = '', ...rest] = (argument ?? '').split(/\s+/);
+      const task = [verb, ...rest].join(' ').trim();
+
+      if (verb === 'show') {
+        const text = await readPlan(path);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: text ? `${path}\n\n${text}` : `no plan yet at ${path}`,
+        });
+        return;
+      }
+      if (verb === 'edit') {
+        const result = await openInEditor(path);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: result.message,
+          ...(result.edited ? {} : { color: theme.warning }),
+        });
+        return;
+      }
+      if (verb === 'approve') {
+        const text = await readPlan(path);
+        if (!text) {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: `there is no plan at ${path} to approve`,
+            color: theme.warning,
+          });
+          return;
+        }
+        agent.setPlan(text);
+        // Back to whatever the session was in before planning: staying in plan
+        // mode after approving one is the one thing the user certainly did not
+        // ask for.
+        const restored = modeBeforePlan.current ?? 'ask';
+        agent.setPermissionMode(restored);
+        setMode(restored);
+        modeBeforePlan.current = undefined;
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `plan approved and pinned for this run; permission mode: ${restored}`,
+        });
+        return;
+      }
+      if (verb === 'clear') {
+        agent.setPlan(undefined);
+        push({ kind: 'notice', id: nextId(), text: 'plan unpinned' });
+        return;
+      }
+      if (task === '') {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: 'usage: /plan <what you want planned>, then /plan edit, /plan approve',
+          color: theme.warning,
+        });
+        return;
+      }
+
+      modeBeforePlan.current = agent.permissionMode;
+      agent.setPermissionMode('plan');
+      setMode('plan');
+      await runTurn(`${task}\n\n${PLAN_PROMPT}`);
+
+      // Written from the last thing the model said, which in plan mode is the
+      // plan, because every mutating tool was refused.
+      const drafted = lastAssistantText.current.trim();
+      if (drafted === '') {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: 'the model produced no plan to write',
+          color: theme.warning,
+        });
+        return;
+      }
+      await savePlan(path, drafted);
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `plan written to ${path}\n/plan edit to change it, /plan approve to pin it`,
+      });
+    },
+    [agent, push, runTurn, session.store],
+  );
+
   const handleCommand = useCallback(
     (command: string) => {
       // Split once, keeping the remainder: `split(/\s+/, 2)` discards everything
@@ -430,6 +587,53 @@ export function App({ session, model, initialPrompt }: AppProps) {
         void undoLast();
         return;
       }
+      if (name === 'plan') {
+        if (busy) {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: 'finish or interrupt the current turn first (esc)',
+            color: theme.warning,
+          });
+          return;
+        }
+        void plan(argument);
+        return;
+      }
+      if (name === 'skills') {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: describeExtensions(session),
+        });
+        return;
+      }
+
+      // A user-defined command is expanded into a prompt and run as one. It is
+      // not a second way to reach the tools: whatever the file asks for goes
+      // through the same turn, and the same gate, as anything typed by hand.
+      const custom = session.commands.find((entry) => entry.name === name);
+      if (custom) {
+        const prompt = expandCommand(custom, argument ?? '');
+        if (prompt.trim() === '') {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: `/${name} expanded to nothing`,
+            color: theme.warning,
+          });
+          return;
+        }
+        if (busy) {
+          agent.steer(prompt);
+          setQueued(agent.pendingSteers);
+          push({ kind: 'user', id: nextId(), text: command });
+          return;
+        }
+        void runTurn(prompt);
+        return;
+      }
+
       push({
         kind: 'notice',
         id: nextId(),
@@ -437,7 +641,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
         color: theme.warning,
       });
     },
-    [agent, busy, exit, push, sessionTree, showMemories, undoLast],
+    [agent, busy, exit, plan, push, runTurn, session, sessionTree, showMemories, undoLast],
   );
 
   const submit = useCallback(
@@ -576,4 +780,29 @@ function ScrollRow({ item }: { item: ScrollItem }) {
       <Text color={item.color ?? theme.muted}>{item.text}</Text>
     </Box>
   );
+}
+
+/**
+ * What `/skills` shows. Skills and commands are listed together because from the
+ * user's side they are the same question - what extra behaviour is loaded in
+ * this directory, and where did it come from.
+ */
+function describeExtensions(session: CreatedSession): string {
+  const lines: string[] = [];
+  if (session.skills.length > 0) {
+    lines.push('skills (the agent loads these itself when they fit):');
+    for (const skill of session.skills) {
+      lines.push(`  ${skill.name}  [${skill.scope}]  ${skill.description}`);
+    }
+  }
+  if (session.commands.length > 0) {
+    if (lines.length > 0) lines.push('');
+    lines.push('commands you can type:');
+    for (const command of session.commands) {
+      lines.push(`  /${command.name}  [${command.scope}]  ${command.description}`);
+    }
+  }
+  return lines.length === 0
+    ? 'no skills or commands found in .earshot/skills, .earshot/commands or your config directory'
+    : lines.join('\n');
 }

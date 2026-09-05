@@ -9,6 +9,14 @@ import {
   UnknownModelError,
 } from '@earshot/core';
 import type { ParsedArgs } from '../args.ts';
+import { startExtensions } from '../extensions.ts';
+import {
+  type OutputFormat,
+  parseFormat,
+  type ResultRecord,
+  SCHEMA,
+  toStreamRecord,
+} from '../output.ts';
 
 const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
@@ -22,8 +30,20 @@ const DEFAULT_MODEL = 'anthropic/claude-opus-5';
  */
 export async function headlessCommand(prompt: string, args: ParsedArgs): Promise<number> {
   const flags = args.flags;
-  const format = typeof flags['output-format'] === 'string' ? flags['output-format'] : 'text';
+  const requestedFormat =
+    typeof flags['output-format'] === 'string' ? flags['output-format'] : 'text';
+  const format = parseFormat(requestedFormat);
+  if (!format) {
+    // Refused rather than falling back to text: a script asking for a format
+    // earshot does not have wants to know that, not to be handed prose.
+    process.stderr.write(
+      `"${requestedFormat}" is not an output format. Use text, json or stream-json ` +
+        `(optionally pinned as json@v1).\n`,
+    );
+    return 2;
+  }
   const emit = makeEmitter(format);
+  const startedAt = Date.now();
 
   let mode: PermissionMode | undefined;
   const requested = flags['permission-mode'];
@@ -35,16 +55,22 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
     mode = requested;
   }
 
+  const extensions = await startExtensions(process.cwd());
+
   let session: Awaited<ReturnType<typeof createSession>>;
   try {
     session = await createSession({
       cwd: process.cwd(),
+      extraTools: extensions.tools,
+      problems: extensions.problems,
+      onDispose: () => extensions.close(),
       model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
       ...(mode ? { mode } : {}),
       ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
       ...resumeFrom(flags),
     });
   } catch (error) {
+    await extensions.close();
     return reportStartupFailure(error);
   }
 
@@ -62,34 +88,56 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
   process.on('SIGINT', onSigint);
 
   let exitCode = 0;
+  let subtype: ResultRecord['subtype'] = 'success';
+  let failure: { kind: string; message: string } | undefined;
+
   try {
     for await (const event of session.agent.runTurn(prompt, controller.signal)) {
       emit(event);
-      if (event.type === 'error') exitCode = 1;
-      if (event.type === 'turn_end' && event.reason === 'aborted') exitCode = 130;
-      if (event.type === 'turn_end' && event.reason === 'max_steps') exitCode = 1;
+      if (event.type === 'error') {
+        exitCode = 1;
+        subtype = 'error';
+        failure = { kind: event.error.kind, message: event.error.message };
+      }
+      if (event.type === 'turn_end' && event.reason === 'aborted') {
+        exitCode = 130;
+        subtype = 'interrupted';
+      }
+      if (event.type === 'turn_end' && event.reason === 'max_steps') {
+        exitCode = 1;
+        subtype = 'max_steps';
+      }
     }
   } finally {
     process.off('SIGINT', onSigint);
     await session.dispose();
   }
 
-  if (format === 'json') {
-    process.stdout.write(
-      `${JSON.stringify(
-        {
-          text: emit.text(),
-          costUsd: session.agent.costUsd,
-          messages: session.agent.history.length,
-          ...(session.store ? { sessionId: session.store.id } : {}),
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  } else if (format === 'text') {
+  if (format === 'text') {
     process.stdout.write('\n');
+    return exitCode;
   }
+
+  // The same record ends a stream and stands alone as the whole of `json`, so a
+  // consumer that reads only the last line of a stream and one that parses a
+  // single object are reading the same thing.
+  const result: ResultRecord = {
+    schema: SCHEMA,
+    type: 'result',
+    subtype,
+    isError: subtype !== 'success',
+    text: emit.text(),
+    costUsd: session.agent.costUsd,
+    durationMs: Date.now() - startedAt,
+    numMessages: session.agent.history.length,
+    model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
+    permissionMode: session.agent.permissionMode,
+    ...(session.store ? { sessionId: session.store.id } : {}),
+    ...(failure ? { error: failure } : {}),
+  };
+  process.stdout.write(
+    format === 'json' ? `${JSON.stringify(result, null, 2)}\n` : `${JSON.stringify(result)}\n`,
+  );
 
   return exitCode;
 }
@@ -107,14 +155,15 @@ function resumeFrom(flags: ParsedArgs['flags']) {
  * see tool activity - a headless run that printed only prose would hide the fact
  * that the agent edited files.
  */
-function makeEmitter(format: string) {
+function makeEmitter(format: OutputFormat) {
   let text = '';
 
   const emit = (event: AgentEvent): void => {
     if (event.type === 'text_delta') text += event.text;
 
     if (format === 'stream-json') {
-      process.stdout.write(`${JSON.stringify(event)}\n`);
+      const record = toStreamRecord(event);
+      if (record) process.stdout.write(`${JSON.stringify(record)}\n`);
       return;
     }
     if (format !== 'text') return;
@@ -130,6 +179,16 @@ function makeEmitter(format: string) {
         if (event.result.isError) {
           process.stderr.write(`  ! ${describe(event.result.output)}\n`);
         }
+        break;
+      case 'hook':
+        // A hook that stopped something is why the run did what it did; leaving
+        // it out would make the transcript unexplainable.
+        if (event.blocked)
+          process.stderr.write(`\n${event.event} hook blocked: ${event.blocked}\n`);
+        for (const problem of event.problems) process.stderr.write(`  ! ${problem}\n`);
+        break;
+      case 'subagent':
+        process.stderr.write(`\n· subagent "${event.description}" (${event.steps} steps)\n`);
         break;
       case 'error':
         process.stderr.write(`\nerror: ${event.error.message}\n`);

@@ -3,6 +3,8 @@ import type {
   Message,
   ProviderRegistry,
   ToolCallPart,
+  ToolDefinition,
+  ToolResultOutput,
   ToolResultPart,
   Usage,
 } from '@earshot/providers';
@@ -16,6 +18,9 @@ import {
   shapeMessages,
   shouldCompact,
 } from './context/index.ts';
+import type { HookEvent } from './hooks/config.ts';
+import type { HookOutcome } from './hooks/run.ts';
+import type { HookRunner } from './hooks/runner.ts';
 import type { ResolvedModel } from './model.ts';
 import { streamModel, turnCost } from './model.ts';
 import {
@@ -26,12 +31,17 @@ import {
 } from './permissions/engine.ts';
 import type { Rule } from './permissions/rules.ts';
 import { persistRule } from './permissions/settings.ts';
+import { renderPlan } from './plan/index.ts';
 import { type ScopeConcern, ScopeContract, type ScopeOptions } from './scope/index.ts';
+import { narrow } from './skills/discover.ts';
 import { BUILTIN_TOOLS, ToolRegistry } from './tools/index.ts';
 import { BackgroundJobs } from './tools/jobs.ts';
+import { DEFAULT_SUBAGENT_TOOLS } from './tools/task.ts';
 import { MemoryTodoStore } from './tools/todo.ts';
 import {
   type PermissionRequest,
+  type SubagentRequest,
+  type SubagentResult,
   type Tool,
   type ToolContext,
   ToolInputError,
@@ -53,6 +63,14 @@ export type AgentEvent =
   | { type: 'compacted'; replaced: number; summary: string }
   | { type: 'scope_concern'; concern: ScopeConcern; accepted: boolean }
   | { type: 'verification'; result: VerificationResult }
+  | { type: 'hook'; event: HookEvent; blocked?: string; problems: string[] }
+  | { type: 'subagent'; description: string; steps: number; costUsd: number }
+  /**
+   * The one-line "why" in front of a tool batch. Emitted for every batch,
+   * including one the model gave no reason for - a missing intent line is
+   * itself worth seeing, and reporting nothing would hide it.
+   */
+  | { type: 'intent'; text: string | undefined; calls: number }
   | { type: 'turn_end'; reason: 'stop' | 'aborted' | 'max_steps' | 'error' }
   | { type: 'error'; error: EarshotError };
 
@@ -91,6 +109,19 @@ export interface AgentOptions {
    * detection.
    */
   verify?: { enabled?: boolean; command?: string; timeoutMs?: number };
+  /** User-configured hooks. Absent means nothing is hooked and nothing is run. */
+  hooks?: HookRunner;
+  /**
+   * Shared rather than constructed, so a subagent is held to the same scope the
+   * parent declared. A subagent with a scope of its own would be a hole straight
+   * through the contract: the parent says which files it will touch, and then
+   * spawns something that never agreed to it.
+   */
+  scopeContract?: ScopeContract;
+  /** Set on a subagent. Its cost lands on the parent's total, not beside it. */
+  onCost?: (costUsd: number) => void;
+  /** Steps a subagent this agent spawns may take. */
+  subagentMaxSteps?: number;
 }
 
 const DEFAULT_MAX_STEPS = 100;
@@ -123,6 +154,12 @@ export class Agent {
    * honoured reads as one that was ignored.
    */
   private systemPrompt: string;
+  /**
+   * The approved plan, kept beside the system prompt rather than merged into
+   * it: the prompt is rebuilt whenever a memory changes, and a plan folded into
+   * that string would be lost the next time it was.
+   */
+  private plan: string | undefined;
   /** Pre-change hashes for the batch currently executing. */
   private batchSnapshot: SnapshotFile[] = [];
   /** Events raised while a call ran, drained by the batch loop that owns it. */
@@ -145,10 +182,16 @@ export class Agent {
    */
   private promptFn: PermissionPrompt | undefined;
   private askFn: ((question: string, options?: string[]) => Promise<string>) | undefined;
+  /**
+   * Set by a skill that declares `allowed-tools`, and cleared at the start of
+   * every turn: a narrowing that outlived the task it was written for would
+   * silently remove tools from work the skill knows nothing about.
+   */
+  private toolRestriction: string[] | undefined;
 
   constructor(private readonly options: AgentOptions) {
     this.tools = new ToolRegistry(options.tools ?? (BUILTIN_TOOLS as Tool<never>[]));
-    this.scope = new ScopeContract(options.cwd, options.scope ?? {});
+    this.scope = options.scopeContract ?? new ScopeContract(options.cwd, options.scope ?? {});
     this.rules = [...options.rules];
     this.mode = options.mode;
     this.promptFn = options.prompt;
@@ -177,6 +220,22 @@ export class Agent {
     this.systemPrompt = system;
   }
 
+  /** Pins an approved plan for the rest of the run. Undefined clears it. */
+  setPlan(plan: string | undefined): void {
+    this.plan = plan?.trim() === '' ? undefined : plan;
+  }
+
+  get pinnedPlan(): string | undefined {
+    return this.plan;
+  }
+
+  /** What is actually sent as the system prompt: the prompt plus any plan. */
+  private get effectiveSystem(): string {
+    return this.plan === undefined
+      ? this.systemPrompt
+      : `${this.systemPrompt}\n\n${renderPlan(this.plan)}`;
+  }
+
   get permissionMode(): PermissionMode {
     return this.mode;
   }
@@ -187,6 +246,16 @@ export class Agent {
 
   get costUsd(): number {
     return this.totalCostUsd;
+  }
+
+  /**
+   * Adds to this session's spend. A subagent calls its parent's, so one session
+   * has one number: a budget that a subagent could spend outside would not be a
+   * budget.
+   */
+  private addCost(costUsd: number): void {
+    this.totalCostUsd += costUsd;
+    this.options.onCost?.(costUsd);
   }
 
   /** Estimated tokens in the last request, and the window they have to fit in. */
@@ -237,9 +306,35 @@ export class Agent {
     // The budget is per turn; the declaration outlives one, because a follow-up
     // like "now do the same for the other file" is the same piece of work.
     this.scope.beginTurn();
+    this.options.hooks?.beginTurn();
+    this.toolRestriction = undefined;
     this.mutatedSinceCheck = false;
     this.checksThisTurn = 0;
-    await this.append({ role: 'user', content: [{ type: 'text', text: prompt }] });
+
+    const submitted = await this.options.hooks?.userPromptSubmit(prompt, signal);
+    if (submitted) {
+      yield hookEvent('UserPromptSubmit', submitted);
+      if (submitted.decision === 'deny') {
+        // The prompt is not appended at all. A blocked prompt that still entered
+        // history would come back on the next request as something the user
+        // asked for and the agent ignored.
+        yield { type: 'turn_end', reason: 'stop' };
+        return;
+      }
+    }
+
+    const context = submitted?.context ?? [];
+    await this.append({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: context.length
+            ? `${prompt}\n\n<hook-context>\n${context.join('\n\n')}\n</hook-context>`
+            : prompt,
+        },
+      ],
+    });
 
     const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_STEPS;
     const modelName = `${this.options.model.provider.id}/${this.options.model.model.id}`;
@@ -259,7 +354,7 @@ export class Agent {
 
       for await (const event of this.prepareRequest(signal)) yield event;
       const messages = this.requestMessages();
-      this.lastRequestTokens = estimateTokens(messages, this.systemPrompt);
+      this.lastRequestTokens = estimateTokens(messages, this.effectiveSystem);
 
       yield { type: 'model_start', model: modelName };
 
@@ -267,9 +362,9 @@ export class Agent {
       let failed: EarshotError | undefined;
 
       for await (const event of streamModel(this.options.registry, this.options.model, {
-        system: this.systemPrompt,
+        system: this.effectiveSystem,
         messages,
-        tools: this.tools.definitions(),
+        tools: this.offeredTools(),
         abortSignal: signal,
       })) {
         switch (event.type) {
@@ -282,7 +377,7 @@ export class Agent {
           case 'finish': {
             assistant = event.message;
             const costUsd = turnCost(this.options.model.model, event.usage);
-            this.totalCostUsd += costUsd;
+            this.addCost(costUsd);
             yield { type: 'usage', usage: event.usage, costUsd };
             break;
           }
@@ -316,6 +411,26 @@ export class Agent {
       if (calls.length === 0) {
         const check = await this.selfCheck(signal);
         if (!check) {
+          const stop = await this.options.hooks?.stop(signal);
+          if (stop) {
+            yield hookEvent('Stop', stop);
+            if (stop.decision === 'deny') {
+              await this.append({
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text:
+                      `<hook>\nA Stop hook asked you to keep going: ${
+                        stop.reason ?? 'no reason given'
+                      }\nThis message is from the harness, not the user. If you believe the ` +
+                      `work is finished, say so and stop.\n</hook>`,
+                  },
+                ],
+              });
+              continue;
+            }
+          }
           yield { type: 'turn_end', reason: 'stop' };
           return;
         }
@@ -323,6 +438,8 @@ export class Agent {
         await this.append(check.message);
         continue;
       }
+
+      yield { type: 'intent', text: intentOf(assistant), calls: calls.length };
 
       const results: ToolResultPart[] = [];
       this.batchSnapshot = [];
@@ -341,6 +458,23 @@ export class Agent {
     }
 
     yield { type: 'turn_end', reason: 'max_steps' };
+  }
+
+  /**
+   * The tools this call offers the model. A skill's `allowed-tools` is applied
+   * as an intersection with what the session already has, never as a union, so a
+   * skill file cannot hand itself a tool the user's settings withheld.
+   */
+  private offeredTools(): ToolDefinition[] {
+    const all = this.tools.definitions();
+    if (!this.toolRestriction) return all;
+    const kept = new Set(
+      narrow(
+        all.map((tool) => tool.name),
+        this.toolRestriction,
+      ),
+    );
+    return all.filter((tool) => kept.has(tool.name));
   }
 
   /**
@@ -415,6 +549,18 @@ export class Agent {
     }
 
     const ctx = this.context(signal);
+
+    // Hooks run before the gate, and can only make the answer stricter: a deny
+    // stops the call, an ask turns an allow into a prompt, and an approve is
+    // read, reported and ignored.
+    const before = await this.options.hooks?.preToolUse(call.toolName, input, signal);
+    if (before) {
+      this.pending.push(hookEvent('PreToolUse', before));
+      if (before.decision === 'deny') {
+        return errorPart(call, before.reason ?? `a PreToolUse hook blocked ${call.toolName}`);
+      }
+    }
+
     let request: PermissionRequest | undefined;
     try {
       request = tool.permission?.(input, ctx);
@@ -424,13 +570,30 @@ export class Agent {
       return errorPart(call, (error as Error).message);
     }
 
-    const decision = decide(tool, request, {
+    let decision = decide(tool, request, {
       mode: this.mode,
       rules: this.rules,
       cwd: this.options.cwd,
     });
 
     if (decision.outcome === 'deny') return errorPart(call, decision.reason);
+
+    // A hook asking for confirmation is honoured even for a read-only tool, which
+    // has no PermissionRequest of its own; one is built from the call so the
+    // prompt still shows what is actually about to happen.
+    if (before?.decision === 'ask' && decision.outcome === 'allow') {
+      const asked = request ?? {
+        tool: call.toolName,
+        target: call.toolName,
+        title: call.toolName,
+        detail: `${call.toolName}(${JSON.stringify(call.input, null, 2)})`,
+      };
+      decision = {
+        outcome: 'ask',
+        reason: before.reason ?? 'a PreToolUse hook asked for confirmation',
+        request: asked,
+      };
+    }
 
     if (decision.outcome === 'ask') {
       const prompt = this.promptFn;
@@ -478,11 +641,18 @@ export class Agent {
 
     try {
       const result = await tool.execute(input, ctx);
+      const after = await this.options.hooks?.postToolUse(
+        call.toolName,
+        input,
+        result.output,
+        signal,
+      );
+      if (after) this.pending.push(hookEvent('PostToolUse', after));
       return {
         type: 'tool_result',
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        output: result.output,
+        output: withHookContext(result.output, after?.context ?? []),
         ...(result.isError ? { isError: true } : {}),
       };
     } catch (error) {
@@ -625,11 +795,11 @@ export class Agent {
     const window = this.options.model.model.contextWindow ?? 0;
     const policy = { threshold: 0.8, keepRecentMessages: 8, ...this.options.compaction };
     const shaped = this.requestMessages();
-    if (!shouldCompact(shaped, this.systemPrompt, window, policy)) return;
+    if (!shouldCompact(shaped, this.effectiveSystem, window, policy)) return;
 
     const result = await compact({
       messages: shaped,
-      system: this.systemPrompt,
+      system: this.effectiveSystem,
       contextWindow: window,
       policy,
       todos: this.todos
@@ -646,7 +816,7 @@ export class Agent {
     const offset = this.compactionPreamble ? 1 : 0;
     this.compactedAt += Math.max(0, result.replaced - offset);
     this.compactionPreamble = result.messages[0];
-    this.lastRequestTokens = estimateTokens(this.requestMessages(), this.systemPrompt);
+    this.lastRequestTokens = estimateTokens(this.requestMessages(), this.effectiveSystem);
     // The cut is reported as a history index, not as a count of shaped
     // messages: the session layer maps it back to the entry ids the summary
     // stands in for, and those are indexed by history position.
@@ -692,6 +862,14 @@ export class Agent {
         }
         return ask(question, choices);
       },
+      restrictTools: (names) => {
+        this.toolRestriction = names;
+      },
+      // Absent on a subagent, so nesting stops at one level: an agent that could
+      // spawn agents that spawn agents has no bound anyone can reason about.
+      ...(this.options.onCost
+        ? {}
+        : { runSubagent: (request, sub) => this.subagent(request, sub) }),
       markRead: (path) => {
         this.readFiles.add(path);
       },
@@ -699,10 +877,129 @@ export class Agent {
     };
   }
 
+  /**
+   * Runs a nested agent and returns its answer.
+   *
+   * What it inherits is the whole design. Permission mode and rules, so nothing
+   * it does escapes the gate. The parent's ScopeContract object, so a file
+   * nobody declared still prompts. The parent's cost total, so one session has
+   * one number. What it does not inherit is context: it starts empty and is
+   * given the prompt, which is the point - and it hands back an answer, not a
+   * transcript, so the parent's window holds the conclusion rather than the
+   * work.
+   */
+  private async subagent(request: SubagentRequest, signal: AbortSignal): Promise<SubagentResult> {
+    const allowed = new Set(request.tools?.length ? request.tools : DEFAULT_SUBAGENT_TOOLS);
+    // Intersection, never a union: a subagent cannot be handed a tool the parent
+    // session does not have, whoever named it.
+    const tools = this.tools
+      .list()
+      .filter((tool) => allowed.has(tool.name) && tool.name !== 'task');
+
+    // The parent's persistence callbacks are dropped rather than passed on: a
+    // subagent's messages are not the session's transcript, and writing them
+    // there would replay them on the next resume as if the user had said them.
+    const { onMessage: _persist, onCompaction: _summarised, ...inherited } = this.options;
+
+    const child = new Agent({
+      ...inherited,
+      system:
+        // The plan travels with it: a subagent working outside the plan the user
+        // approved is the same hole as one working outside the declared scope.
+        `${this.effectiveSystem}\n\n<subagent>\nYou are running as a subagent for one ` +
+        `self-contained task: ${request.description}. You cannot see the conversation that ` +
+        'sent you here, and only your final message is returned - so answer in full, and ' +
+        'say plainly what you could not find or could not do rather than implying success.' +
+        '\n</subagent>',
+      tools,
+      scopeContract: this.scope,
+      onCost: (costUsd) => this.addCost(costUsd),
+      maxSteps: this.options.subagentMaxSteps ?? 30,
+    });
+    child.setPrompt(this.promptFn);
+    child.setAsk(this.askFn);
+
+    let text = '';
+    let steps = 0;
+    let stoppedBecause: SubagentResult['stoppedBecause'];
+    const before = this.totalCostUsd;
+
+    for await (const event of child.runTurn(request.prompt, signal)) {
+      if (event.type === 'model_start') steps++;
+      if (event.type === 'message') {
+        const said = event.message.content
+          .filter((part) => part.type === 'text')
+          .map((part) => (part.type === 'text' ? part.text : ''))
+          .join('');
+        if (said.trim() !== '') text = said;
+      }
+      if (event.type === 'turn_end' && event.reason !== 'stop') stoppedBecause = event.reason;
+      if (event.type === 'error') stoppedBecause = 'error';
+      // Prompts and scope questions the subagent raised are the user's to see.
+      if (event.type === 'permission' || event.type === 'scope_concern' || event.type === 'hook') {
+        this.pending.push(event);
+      }
+    }
+    child.dispose();
+
+    const costUsd = this.totalCostUsd - before;
+    this.pending.push({ type: 'subagent', description: request.description, steps, costUsd });
+    return { text: text.trim(), steps, costUsd, ...(stoppedBecause ? { stoppedBecause } : {}) };
+  }
+
   private async append(message: Message): Promise<void> {
     this.history.push(message);
     await this.options.onMessage?.(message);
   }
+}
+
+/**
+ * The line the model said before reaching for a tool.
+ *
+ * The first line of the text it emitted alongside the calls, not all of it: the
+ * point of the intent line is that one line of output is enough to catch a wrong
+ * turn, and a paragraph is not one line.
+ */
+function intentOf(assistant: Message): string | undefined {
+  const said = assistant.content
+    .filter((part) => part.type === 'text')
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join(' ')
+    .trim();
+  if (said === '') return undefined;
+  return said
+    .split(/\r?\n/)
+    .find((line) => line.trim() !== '')
+    ?.trim();
+}
+
+function hookEvent(event: HookEvent, outcome: HookOutcome): AgentEvent {
+  return {
+    type: 'hook',
+    event,
+    ...(outcome.decision === 'deny' && outcome.reason ? { blocked: outcome.reason } : {}),
+    problems: outcome.problems,
+  };
+}
+
+/**
+ * A PostToolUse hook's output, attached to the result the model reads. Appended
+ * rather than substituted: the tool's own output is what actually happened, and
+ * a hook commenting on it must not be able to replace it.
+ */
+function withHookContext(output: ToolResultOutput, context: string[]): ToolResultOutput {
+  if (context.length === 0) return output;
+  const note = `<hook-context>\n${context.join('\n\n')}\n</hook-context>`;
+  if (output.type === 'text') return { type: 'text', value: `${output.value}\n\n${note}` };
+  return {
+    type: 'content',
+    value: [
+      ...(output.type === 'content'
+        ? output.value
+        : [{ type: 'text' as const, text: JSON.stringify(output.value) }]),
+      { type: 'text', text: note },
+    ],
+  };
 }
 
 function errorPart(call: ToolCallPart, message: string): ToolResultPart {

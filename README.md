@@ -16,11 +16,12 @@
 ---
 
 > [!WARNING]
-> **earshot is pre-alpha and not yet a working coding agent.**
-> The provider layer is built and tested: you can list models and run a single
-> headless turn against 19 providers. The agent loop, tools, permissions and the
-> TUI do not exist yet. See [status](#status) for exactly what works today, and
-> the [roadmap](docs/roadmap.md) for what is coming.
+> **earshot is pre-alpha, and has never been run against a live API.**
+> The agent loop, tools, permissions, sessions, the TUI and the extension
+> surfaces are all built and tested — against a scripted provider. No real model
+> has answered it, no MCP server has been spawned for real, and nobody has driven
+> the TUI in a real terminal. See [status](#status) for what that means, and the
+> [roadmap](docs/roadmap.md) for what is coming.
 
 ## Why another one?
 
@@ -102,19 +103,22 @@ earshot is built in milestones. Honest state of each:
 | **M0** Scaffold | Monorepo, CI on mac/linux/windows, build | ✅ Done |
 | **M1** Provider layer | Registry, catalog, auth, 7 wire adapters, headless turn | ✅ Done |
 | **M2** Coding agent | Tools, permissions, sessions, Ink TUI | ✅ Done |
-| **M3** Listening | Scope contract, compaction, memory | ⬜ Next |
-| **M4** Extensibility | Skills, commands, hooks, MCP, subagents | ⬜ Planned |
+| **M3** Listening | Scope contract, compaction, memory | ✅ Done |
+| **M4** Extensibility | MCP, skills, commands, hooks, subagents | ✅ Done |
 | **M5** Ship | Docs site, npm, binaries, Windows QA | ⬜ Planned |
 
 **Works today:** the interactive TUI and `earshot -p`, both running the full
-agent loop with twelve tools; the permission system (five modes, `Tool(pattern)`
-rules, deny-first); sessions with `--resume` and `--continue`; `AGENTS.md`
-loading; undo snapshots; 896 models with live pricing; credential resolution
-across CLI flag, env var, auth file and ambient cloud credentials; cost
-accounting including prompt caching.
+agent loop; the permission system (five modes, `Tool(pattern)` rules,
+deny-first); the scope contract, preference memory, auto-compaction and
+end-of-turn verification; sessions with `--resume`, `--continue`, `/fork`,
+`/rewind` and `/undo`; MCP servers over stdio and HTTP; skills, user-defined
+slash commands, hooks and subagents; a versioned headless JSON output; 896
+models with live pricing and cost accounting including prompt caching.
 
-**Does not exist yet:** auto-compaction, the memory system, MCP, skills, hooks,
-subagents, `/fork`, `/rewind` and `/undo` commands.
+**Never verified against a live API.** Every test runs against a scripted
+provider, and nobody has driven the TUI in a real terminal. If you have a key
+for anything, a single real turn is the most useful thing you can contribute —
+see the [roadmap](docs/roadmap.md#where-help-is-most-useful).
 
 **Windows needs Git Bash.** `bash` uses Git for Windows and fails with an install
 pointer if it is missing, rather than falling back to PowerShell. One shell
@@ -171,8 +175,10 @@ still cheap to change. The highest-leverage things:
 - **Try a provider you have a key for** and report what breaks. Nothing has been
   tested live.
 - **Add a provider** — [one line for most vendors](docs/adding-a-provider.md).
-- **M3 is open** — context shapers, auto-compaction, the memory system. See the
-  [roadmap](docs/roadmap.md).
+- **Drive the TUI in a real terminal** and report what it does. It has only ever
+  been mounted against a fake stdout.
+- **Point it at an MCP server you use** — the protocol is tested against an
+  in-memory server, never a spawned one. See [Extending earshot](extending.md).
 - **Use it and tell us where it stopped listening** — scope creep, a prompt that
   should not have appeared, a question it should have asked.
 

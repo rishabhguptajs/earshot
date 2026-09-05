@@ -133,13 +133,20 @@ function scriptedRegistry(turns: Turn[]) {
 /** Entry ids the app asked to rewind to, so a test can assert it was reached. */
 const rewound: string[] = [];
 
-function sessionFor(turns: Turn[], cwd: string, mode: 'auto' | 'ask' = 'auto'): CreatedSession {
+function sessionFor(
+  turns: Turn[],
+  cwd: string,
+  mode: 'auto' | 'ask' = 'auto',
+  commands: CreatedSession['commands'] = [],
+): CreatedSession {
   const { registry, resolved } = scriptedRegistry(turns);
   const agent = new Agent({ registry, model: resolved, cwd, system: '', mode, rules: [] });
   return {
     agent,
     problems: [],
     resumed: 0,
+    skills: [],
+    commands,
     installPrompt: (prompt) => agent.setPrompt(prompt),
     installAsk: (ask) => agent.setAsk(ask),
     // The session-tree commands are wired to these; the storage layer has its
@@ -207,13 +214,14 @@ async function withApp(
     initialPrompt?: string;
     /** Runs before the app mounts, so a turn cannot race the fixture. */
     setup?: (cwd: string) => Promise<void>;
+    commands?: CreatedSession['commands'];
   } = {},
 ): Promise<void> {
   const cwd = await mkdtemp(join(tmpdir(), 'earshot-tui-'));
   await options.setup?.(cwd);
   const stdout = new FakeStdout();
   const stdin = new FakeStdin();
-  const session = sessionFor(turns, cwd, options.mode ?? 'auto');
+  const session = sessionFor(turns, cwd, options.mode ?? 'auto', options.commands ?? []);
 
   const instance = render(
     <App
@@ -290,6 +298,27 @@ describe('the app renders', () => {
       await waitFor(stdout, 'unknown command');
       expect(stdout.output).not.toContain('should not be reached');
     });
+  });
+
+  test('a user-defined command is expanded into a prompt and run', async () => {
+    await withApp(
+      [{ text: 'ran the command' }],
+      async ({ stdout, stdin }) => {
+        await type(stdin, '/ship the release');
+        await waitFor(stdout, 'ran the command');
+      },
+      {
+        commands: [
+          {
+            name: 'ship',
+            description: 'ships',
+            scope: 'project',
+            path: '/x',
+            body: 'Ship $ARGUMENTS now.',
+          },
+        ],
+      },
+    );
   });
 
   test('/mode switches the permission mode and says so', async () => {
