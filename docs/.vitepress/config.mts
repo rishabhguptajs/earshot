@@ -29,6 +29,7 @@ export default defineConfig({
           { text: 'Providers', link: '/providers' },
           { text: 'Headless output', link: '/headless' },
           { text: 'Editor integration (ACP)', link: '/acp' },
+          { text: 'Compatibility', link: '/compatibility' },
         ],
       },
       {
