@@ -1,6 +1,7 @@
 import { VERSION } from '@earshot/core';
 import { parseArgs } from './args.ts';
 import { authCommand } from './commands/auth.ts';
+import { doctorCommand } from './commands/doctor.ts';
 import { headlessCommand } from './commands/headless.ts';
 import { interactiveCommand } from './commands/interactive.ts';
 import { mcpCommand } from './commands/mcp.ts';
@@ -46,6 +47,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === 'models') return modelsCommand(args);
   if (command === 'mcp') return mcpCommand(args);
   if (command === 'auth') return authCommand(args);
+  if (command === 'doctor') return doctorCommand(args);
   if (command) {
     process.stderr.write(`earshot: "${command}" is not implemented yet\n`);
     return 1;
