@@ -1,8 +1,5 @@
 # CLI reference
 
-> Commands marked **planned** are in the help text but not implemented. Running
-> one prints `not implemented yet` and exits 1.
-
 ## Synopsis
 
 ```
@@ -11,9 +8,7 @@ earshot -p "<prompt>" [flags]     one headless turn
 earshot models [filter] [flags]   list the model catalog
 earshot auth <login|list|logout>  manage credentials
 earshot mcp <list|trust|untrust>  manage MCP servers
-earshot config <get|set>          read and write config          (planned)
-earshot acp                       run as an ACP server           (planned)
-earshot doctor                    diagnose the local setup       (planned)
+earshot doctor                    diagnose the local setup
 ```
 
 ## Global flags
@@ -95,6 +90,13 @@ input/output), and capability tags (`reasoning`, `vision`, `no-tools`).
 
 Filtering is a case-insensitive substring match against the model id, the
 provider id and the display name.
+
+## `earshot doctor`
+
+Runs local diagnostics without contacting a model provider or printing secrets.
+It checks the earshot and Node versions, platform, Git, Bash (Git Bash on
+Windows), writable config/data locations, settings JSON, and POSIX auth-file
+permissions. `PASS` and `WARN` checks exit 0; any `FAIL` exits 1.
 
 ## Model references
 

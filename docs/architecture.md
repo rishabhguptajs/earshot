@@ -1,7 +1,7 @@
 # Architecture
 
-How earshot is put together, and why. Sections marked **planned** describe design
-that isn't built yet — see [status](../README.md#status).
+How earshot is put together, and why. Sections marked **future** describe design
+that isn't built yet — see [status on GitHub](https://github.com/rishabhguptajs/earshot#status).
 
 ## Packages
 
@@ -152,7 +152,7 @@ tool call the model is still awaiting a result for.
 
 ## Tools
 
-Fourteen built in, in [`packages/core/src/tools`](../packages/core/src/tools) —
+Fourteen built in, in [`packages/core/src/tools`](https://github.com/rishabhguptajs/earshot/tree/main/packages/core/src/tools) —
 the twelve from M2 plus `declare_scope` and `task` — with a `skill` tool added
 when a project has skills, and one tool per MCP tool a configured server offers. Two rules
 shape the rest:

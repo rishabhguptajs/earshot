@@ -1,5 +1,8 @@
 node_modules/
 dist/
+artifacts/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 *.tsbuildinfo
 .earshot/settings.local.json
 .DS_Store

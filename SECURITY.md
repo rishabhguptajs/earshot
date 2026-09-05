@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-earshot is pre-alpha. Only `main` receives fixes. There is no released version yet.
+Before 1.0, only the latest release and `main` receive security fixes.
 
 ## Reporting a vulnerability
 
