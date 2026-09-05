@@ -17,6 +17,7 @@ import { skillTool } from '../tools/skill.ts';
 import type { Tool } from '../tools/types.ts';
 import { ShadowGit } from '../undo/shadow-git.ts';
 import { VERSION } from '../version.ts';
+import { repairMessage, unresolvedToolCalls } from './repair.ts';
 import {
   branchTo,
   latestSession,
@@ -133,6 +134,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
 
   let store: SessionStore | undefined;
   let replayed: ReturnType<typeof messagesOf> = [];
+  const repairProblems: string[] = [];
 
   if (!options.ephemeral) {
     const resumePath = await resolveResumePath(options);
@@ -142,6 +144,22 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
       // rewound has entries that are no longer part of its history.
       replayed = messagesOf(branchTo(entries));
       store = await SessionStore.open(resumePath).catch(() => undefined);
+
+      // A crash between the assistant message and its tool results leaves calls
+      // with no answer, which the provider rejects on the next request - so the
+      // resumed session would fail before the user typed anything. The results
+      // are appended as a new entry; nothing already written is touched.
+      const orphaned = unresolvedToolCalls(replayed);
+      if (orphaned.length > 0) {
+        const repair = repairMessage(orphaned);
+        replayed = [...replayed, repair];
+        if (store) await store.appendMessage(repair);
+        repairProblems.push(
+          `repaired an interrupted turn: ${orphaned.length} tool ` +
+            `${orphaned.length === 1 ? 'call' : 'calls'} ` +
+            `(${orphaned.map((call) => call.toolName).join(', ')}) had no recorded result`,
+        );
+      }
     }
     store ??= await SessionStore.create(options.cwd, {
       model: modelRef,
@@ -239,6 +257,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
       ...discovered.problems,
       ...loadedHooks.problems,
       ...(started?.problems ?? []),
+      ...repairProblems,
       ...(options.problems ?? []),
     ],
     resumed: replayed.length,
