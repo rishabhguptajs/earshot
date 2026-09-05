@@ -44,6 +44,7 @@ import { BUILTIN_TOOLS, ToolRegistry } from './tools/index.ts';
 import { BackgroundJobs } from './tools/jobs.ts';
 import { DEFAULT_SUBAGENT_TOOLS } from './tools/task.ts';
 import { MemoryTodoStore } from './tools/todo.ts';
+import { toolSearchTool } from './tools/tool-search.ts';
 import {
   type PermissionRequest,
   type SubagentRequest,
@@ -194,9 +195,26 @@ export class Agent {
    * silently remove tools from work the skill knows nothing about.
    */
   private toolRestriction: string[] | undefined;
+  /**
+   * Deferred tools `tool_search` has surfaced. Session-scoped rather than
+   * per-turn: a tool the model went looking for in one turn is exactly the tool
+   * the follow-up turn needs, and making it search again would be theatre.
+   */
+  private readonly surfacedTools = new Set<string>();
 
   constructor(private readonly options: AgentOptions) {
     this.tools = new ToolRegistry(options.tools ?? (BUILTIN_TOOLS as Tool<never>[]));
+    if (this.tools.list().some((tool) => tool.deferred)) {
+      this.tools.add(
+        toolSearchTool({
+          all: () => this.tools.list().filter((tool) => tool.deferred),
+          surface: (name) => {
+            this.surfacedTools.add(name);
+          },
+          surfaced: (name) => this.surfacedTools.has(name),
+        }) as unknown as Tool<never>,
+      );
+    }
     this.scope = options.scopeContract ?? new ScopeContract(options.cwd, options.scope ?? {});
     this.rules = [...options.rules];
     this.mode = options.mode;
@@ -505,7 +523,9 @@ export class Agent {
    * skill file cannot hand itself a tool the user's settings withheld.
    */
   private offeredTools(): ToolDefinition[] {
-    const all = this.tools.definitions();
+    const all = this.tools.definitions(
+      (tool) => !tool.deferred || this.surfacedTools.has(tool.name),
+    );
     if (!this.toolRestriction) return all;
     const kept = new Set(
       narrow(

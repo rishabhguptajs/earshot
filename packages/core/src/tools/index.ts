@@ -24,6 +24,7 @@ export * from './shell.ts';
 export { skillTool } from './skill.ts';
 export * from './task.ts';
 export * from './todo.ts';
+export * from './tool-search.ts';
 export * from './types.ts';
 export * from './walk.ts';
 export { htmlToText } from './web-fetch.ts';

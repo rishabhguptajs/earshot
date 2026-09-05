@@ -1,6 +1,13 @@
 import type { Tool } from '@earshot/core';
 import { McpManager } from '@earshot/mcp';
 
+/**
+ * Above this many MCP tools, their schemas stop being offered in every request
+ * and are found with `tool_search` instead. Under it, listing them outright is
+ * cheaper than making the model search: one round trip beats two.
+ */
+export const TOOL_SEARCH_THRESHOLD = 25;
+
 export interface Extensions {
   tools: Tool<never>[];
   /** Lines worth showing before the first turn: a server that failed, a bad config. */
@@ -36,10 +43,18 @@ export async function startExtensions(cwd: string): Promise<Extensions> {
     .filter((report) => report.status !== 'ready')
     .map((report) => `mcp server "${report.name}" ${report.detail ?? 'did not start'}`);
 
+  const mcpTools = manager.tools();
+  const deferred = mcpTools.length > TOOL_SEARCH_THRESHOLD;
+
   return {
-    tools: manager.tools(),
+    tools: deferred ? mcpTools.map((tool) => ({ ...tool, deferred: true })) : mcpTools,
     problems: [...manager.problems, ...failures],
-    summary: manager.summary(),
+    summary: [
+      ...manager.summary(),
+      ...(deferred
+        ? [`${mcpTools.length} mcp tools: found with tool_search rather than listed in full`]
+        : []),
+    ],
     close: () => manager.close(),
   };
 }

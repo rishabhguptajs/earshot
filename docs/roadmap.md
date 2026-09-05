@@ -147,7 +147,7 @@ implementation and artifact builds are complete.
 ## M6 — v1.x ⬜
 
 ACP server (Zed, JetBrains, Neovim), in-process TypeScript extensions, image
-input, Anthropic server-side compaction, tool search for large MCP sets.
+input, tool search for large MCP sets.
 
 **ACP implementation in progress:** stable v1 initialization, session creation
 and loading, prompt streaming, cancellation, permissions, elicitation and tool
@@ -159,6 +159,16 @@ this slice.
 **Image input implemented:** unified user prompts now carry text and images into
 compatible provider adapters from `--image` and ACP. Unsupported model
 capabilities and file formats fail before the provider request.
+
+**Tool search implemented:** past 25 MCP tools, their schemas leave the request
+and `tool_search` finds them on demand. A surfaced tool is listed for the rest of
+the session and goes through the same permission gate it always would; the
+search itself grants nothing.
+
+**Dropped from M6:** Anthropic server-side compaction. earshot's own shapers and
+compaction are provider-agnostic and already do the job; a second, vendor-only
+context path would mean the loop behaves differently depending on who is serving
+the model, which is the thing the provider boundary exists to prevent.
 
 ## Explicitly out of scope
 

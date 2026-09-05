@@ -35,6 +35,12 @@ reported rather than ignored.
 server name may not itself contain `__` — one that could would be able to
 impersonate another server's tools.
 
+**Past 25 MCP tools, they are not listed in the prompt.** Instead the model gets
+one `tool_search` tool and finds them by what it wants to do. A search surfaces
+at most ten at a time and they stay listed for the rest of the session. Nothing
+about the gate changes: a surfaced tool is permission-checked exactly as it would
+have been had it been listed all along, and `tool_search` itself grants nothing.
+
 **An MCP tool is never read-only.** A server's `readOnlyHint` is an assertion by
 the same party that wrote the tool, so earshot displays it and does not believe
 it: every MCP call is serialised and gated. Rules name one tool, not one server:

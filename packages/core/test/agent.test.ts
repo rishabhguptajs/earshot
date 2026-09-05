@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Agent, type AgentEvent, type AgentOptions } from '../src/agent.ts';
 import type { PromptChoice } from '../src/permissions/engine.ts';
 import { parseRule } from '../src/permissions/rules.ts';
+import { BUILTIN_TOOLS, defineTool, type Tool, text } from '../src/tools/index.ts';
 import { withTempDir } from './helpers.ts';
 import { type ScriptedTurn, scripted } from './scripted-model.ts';
 
@@ -30,6 +31,36 @@ async function collect(generator: AsyncGenerator<AgentEvent>): Promise<AgentEven
 const signal = () => new AbortController().signal;
 
 describe('the loop', () => {
+  test('a deferred tool stays out of the request until tool_search surfaces it', async () => {
+    await withTempDir(async (cwd) => {
+      const hidden = defineTool({
+        name: 'github__create_issue',
+        description: 'Open an issue on a repository',
+        inputSchema: { type: 'object', properties: {} },
+        readOnly: true,
+        parse: () => ({}),
+        execute: async () => ({ output: text('opened') }),
+      }) as unknown as Tool<never>;
+      hidden.deferred = true;
+
+      const { agent, requests } = agentFor(
+        [
+          { calls: [{ id: '1', name: 'tool_search', input: { query: 'open an issue' } }] },
+          { text: 'found it' },
+        ],
+        cwd,
+        { tools: [...(BUILTIN_TOOLS as Tool<never>[]), hidden] },
+      );
+
+      await collect(agent.runTurn('open an issue', signal()));
+
+      const offered = (index: number) => requests[index]?.tools?.map((tool) => tool.name) ?? [];
+      expect(offered(0)).toContain('tool_search');
+      expect(offered(0)).not.toContain('github__create_issue');
+      expect(offered(1)).toContain('github__create_issue');
+    });
+  });
+
   test('an image prompt reaches the model and append-only history intact', async () => {
     const s = scripted([{ text: 'I see it' }]);
     s.model.model.capabilities.vision = true;
