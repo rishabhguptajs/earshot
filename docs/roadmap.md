@@ -144,13 +144,12 @@ implementation and artifact builds are complete.
 
 **Target:** adding an OpenAI-compatible vendor takes ≤30 lines. Currently 1.
 
-## M6 — v1.x ⬜
+## M6 — v1.x 🟨
 
 ACP server (Zed, JetBrains, Neovim), in-process TypeScript extensions, image
 input, tool search for large MCP sets.
 
-**ACP implementation in progress:** stable v1 initialization, session creation
-and loading, prompt streaming, cancellation, permissions, elicitation and tool
+**ACP implemented:** stable v1 initialization, session creation and loading, prompt streaming, cancellation, permissions, elicitation and tool
 events are implemented with protocol-level tests. Zed, JetBrains and Neovim
 still require the recorded physical QA checklist in [Editor integration with
 ACP](acp.md); client-provided MCP definitions and draft ACP v2 are not part of
@@ -165,10 +164,18 @@ and `tool_search` finds them on demand. A surfaced tool is listed for the rest o
 the session and goes through the same permission gate it always would; the
 search itself grants nothing.
 
+**In-process extensions implemented:** a module in `.earshot/extensions/` or the
+config directory contributes tools directly, namespaced and gated like any
+other. A project extension is inert until `earshot extensions trust` names it,
+because being in-process means it is not sandboxed and cannot be.
+
 **Dropped from M6:** Anthropic server-side compaction. earshot's own shapers and
 compaction are provider-agnostic and already do the job; a second, vendor-only
 context path would mean the loop behaves differently depending on who is serving
 the model, which is the thing the provider boundary exists to prevent.
+
+**Acceptance remaining:** the recorded editor QA checklist in Zed, JetBrains and
+Neovim. Everything else in M6 is implemented and covered by tests.
 
 ## Explicitly out of scope
 

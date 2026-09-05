@@ -9,7 +9,7 @@ import {
   UnknownModelError,
 } from '@earshot/core';
 import type { ParsedArgs } from '../args.ts';
-import { startExtensions } from '../extensions.ts';
+import { startExtensions } from '../extensions/index.ts';
 import { loadImage } from '../image.ts';
 import {
   type OutputFormat,
