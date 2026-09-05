@@ -88,9 +88,12 @@ export function customProvider(config: CustomProviderConfig): Provider {
 }
 
 /**
- * Ollama exposes an OpenAI-compatible `/v1`, but it drops tool calls when
- * streaming, so we point at that endpoint only for discovery and mark models as
- * needing the buffered path. Model discovery is live: whatever the user has pulled.
+ * Ollama, over its own `/api/chat` rather than its OpenAI-compatible `/v1`.
+ *
+ * The compatible endpoint drops tool calls from streamed responses, which for a
+ * coding agent means a local model can stream or use tools but not both. The
+ * native endpoint does neither, so it is worth the one hand-written adapter in
+ * the project. Model discovery stays live: whatever the user has pulled.
  */
 export function ollamaProvider(
   baseUrl = process.env.OLLAMA_HOST ?? 'http://127.0.0.1:11434',
@@ -99,10 +102,9 @@ export function ollamaProvider(
     id: 'ollama',
     name: 'Ollama',
     auth: { kind: 'none' },
-    baseUrl: `${baseUrl.replace(/\/$/, '')}/v1`,
-    api: 'openai-completions',
+    baseUrl: baseUrl.replace(/\/$/, ''),
+    api: 'ollama-native',
     models: () => [],
-    notice: 'Ollama drops tool calls from streamed responses; tool turns are buffered.',
     async fetchModels(ctx: WireContext): Promise<Model[]> {
       const root = (ctx.baseUrl ?? `${baseUrl}/v1`).replace(/\/v1\/?$/, '');
       const response = await fetch(`${root}/api/tags`);
@@ -117,7 +119,7 @@ export function ollamaProvider(
         contextWindow: 32_768,
         maxOutputTokens: 8_192,
         capabilities: { tools: true, vision: false, reasoning: false },
-        api: 'openai-completions' as const,
+        api: 'ollama-native' as const,
       }));
     },
   };
