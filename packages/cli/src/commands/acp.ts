@@ -1,7 +1,7 @@
 import { type AcpSessionFactory, runAcpServer } from '@earshot/acp';
 import { createSession, isPermissionMode, listSessions, type PermissionMode } from '@earshot/core';
 import type { ParsedArgs } from '../args.ts';
-import { startExtensions } from '../extensions.ts';
+import { startExtensions } from '../extensions/index.ts';
 
 const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
