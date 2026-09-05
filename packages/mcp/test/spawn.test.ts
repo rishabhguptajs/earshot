@@ -105,7 +105,15 @@ describe('a real stdio server', () => {
     try {
       // Written by the fixture on startup; it must not have been inherited into
       // the process that is drawing the TUI.
-      await Bun.sleep(200);
+      //
+      // Polled rather than slept on: how long a spawned process takes to write
+      // its first stderr line is a property of the machine, and a fixed wait
+      // that is generous on a developer's laptop is a coin flip on a loaded CI
+      // runner. Waiting for the condition fails only when the line never comes.
+      const deadline = Date.now() + 10_000;
+      while (!client.diagnostics().includes('fixture server ready') && Date.now() < deadline) {
+        await Bun.sleep(25);
+      }
       expect(client.diagnostics()).toContain('fixture server ready');
     } finally {
       await client.close();
