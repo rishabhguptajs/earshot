@@ -7,9 +7,17 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 ## [Unreleased]
 
-Pre-alpha. Not yet published to npm.
+Changes queued for the next release.
 
 ### Added
+
+- **Ship pipeline** — a VitePress documentation site, verified `npm install -g`
+  tarball, npm provenance publishing, and standalone executables for macOS
+  arm64/x64, Linux x64/arm64, and Windows x64.
+- **`earshot doctor`** — runtime, shell, Git, writable-state, settings, and
+  credential-file permission diagnostics that never print a secret.
+- **Release QA** — native CI smoke tests for every binary and a human Windows
+  Terminal acceptance checklist.
 
 - **MCP client** (`packages/mcp`) — stdio and streamable HTTP servers, tools
   namespaced `server__tool` and gated exactly like built-ins. An MCP tool is
@@ -63,10 +71,9 @@ Pre-alpha. Not yet published to npm.
 
 ### Known limitations
 
-- No agent loop, tools, permissions, TUI, sessions, memory, MCP, skills or hooks
-  yet — see the [roadmap](docs/roadmap.md).
-- **No provider has been verified against a live API.** Tests run against
-  scripted provider output.
-- Ollama uses the OpenAI-compatible endpoint, which drops tool calls when
-  streaming; the native adapter is not built.
-- ChatGPT sign-in (`openai-codex-responses`) is not implemented.
+- Provider conformance is tested with scripted output; live behaviour still
+  needs coverage for each provider/model combination.
+- Windows CI runs natively, but a release still requires the hands-on Windows
+  Terminal checklist in [the release guide](docs/release.md).
+- ChatGPT subscription sign-in for Codex models is deliberately unsupported;
+  use an OpenAI API key. This is a product boundary, not a planned workaround.

@@ -1,6 +1,6 @@
 # Contributing to earshot
 
-earshot is pre-alpha, which makes this a good moment to contribute: the
+earshot is pre-1.0, which makes this a good moment to contribute: the
 interfaces are still cheap to change, and a well-argued objection to a design
 decision is worth more now than after it's load-bearing.
 
@@ -23,6 +23,10 @@ bun test
 | `bun run lint` | biome |
 | `bun run format` | biome, writing fixes |
 | `bun run build` | Bundle the publishable package |
+| `bun run build:docs` | Build the documentation site |
+| `bun run build:binaries [target]` | Build one or all standalone executables |
+| `bun run smoke:npm` | Pack, globally install, and run the npm tarball in isolation |
+| `bun run release:check` | Run every release-blocking automated check |
 | `bun run scripts/fetch-catalog.ts` | Refresh the models.dev snapshot |
 
 Before opening a PR, all four must pass:
@@ -53,8 +57,8 @@ Dependencies point one way: `cli → tui → core → providers`.
   live API. Report what breaks — this is the most useful thing anyone can do
   right now.
 - **[Add a provider](docs/adding-a-provider.md)** — one line for most vendors.
-- **An M2 tool.** Self-contained and well specified. See the
-  [roadmap](docs/roadmap.md).
+- **A focused M6 feature.** Keep it self-contained and start with the contract in
+  the [roadmap](docs/roadmap.md).
 - **Windows testing** in a real terminal.
 
 For anything large, open an issue first. A rejected PR wastes more of your time
@@ -112,6 +116,12 @@ add cases there rather than per-provider tests.
 In the PR description, state what you actually verified — including what you
 couldn't. "Ran a live turn against Groq" and "couldn't test live, no key" are both
 useful; silence is not.
+
+## Releases
+
+Maintainers follow [the release and platform QA guide](docs/release.md). A release
+needs `bun run release:check`, five native artifact jobs, and a recorded Windows
+Terminal check. Never hand-edit generated artifacts or publish from a dirty tree.
 
 ## What won't be merged
 

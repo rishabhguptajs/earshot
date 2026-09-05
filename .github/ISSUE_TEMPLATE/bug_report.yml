@@ -5,8 +5,8 @@ body:
   - type: markdown
     attributes:
       value: |
-        earshot is pre-alpha and no provider has been verified against a live API,
-        so provider bugs are expected and genuinely useful to receive.
+        earshot is pre-1.0. OpenRouter has a live smoke test, but provider/model
+        behaviour varies, so provider bugs are genuinely useful to receive.
 
   - type: textarea
     id: what-happened

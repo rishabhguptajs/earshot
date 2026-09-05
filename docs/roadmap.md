@@ -23,8 +23,8 @@ and Windows, `Bun.build` bundling, `earshot --version`.
 Ollama's native adapter — Ollama currently uses the OpenAI-compatible endpoint,
 which drops tool calls when streaming.
 
-**Caveat:** no provider has been verified against a live API. Tests run against
-scripted provider output.
+**Verification:** the shared conformance suite uses scripted output, and an
+OpenRouter free-route request has completed against the live API.
 
 ## M2 — Coding agent ✅
 
@@ -56,8 +56,8 @@ matching all differ by machine for the tool the agent uses most.
 **Not done in M2:** context shapers and auto-compaction, `/fork`, `/rewind` and
 `/undo` — all landed in M3.
 
-**Caveat:** still not verified against a live API. Tests run the whole loop
-against a scripted provider.
+**Verification:** the complete agent loop has run against OpenRouter's live API
+in headless mode as well as against scripted providers in the suite.
 
 ## M3 — Listening + context ✅
 
@@ -85,9 +85,8 @@ The milestone the project is named after.
 which move to M4 with the rest of the command surface. Curiosity levels and
 `--max-cost` are also still unimplemented.
 
-**Caveat:** still not verified against a live API, and the TUI has still never
-been driven by a human in a real terminal — only mounted against a fake stdout
-in tests.
+**Verification:** the TUI has completed a live-model turn in a real macOS PTY;
+its detailed interaction suite also runs against a controlled terminal stream.
 
 ## M4 — Extensibility ✅
 
@@ -122,14 +121,26 @@ to "deliberately not supported" — see
 [Providers](providers.md#deliberately-not-supported). Curiosity levels and
 `--max-cost` are still unimplemented.
 
-**Caveat:** still not verified against a live API, no MCP server has been spawned
-for real, and the TUI has still never been driven by a human in a real terminal.
+**Verification:** the suite spawns a real stdio MCP process and covers its
+environment isolation, tool listing, calls, diagnostics, and shutdown.
 
-## M5 — Ship ⬜
+## M5 — Ship 🟨
 
 Docs site, `npm i -g earshot`, compiled binaries (macOS arm64/x64, Linux
 x64/arm64, Windows x64), `/doctor`, Windows QA in Windows Terminal, changelog,
 contributor guide.
+
+The docs site is built with VitePress and deploys through GitHub Pages. Tagged
+releases validate a clean global npm install, publish with provenance, and ship
+five native executables. `/doctor` validates the local runtime without exposing
+credentials. Windows has native CI plus a release-blocking Windows Terminal
+acceptance checklist; the checklist result is recorded per release rather than
+claimed by code.
+
+**Release acceptance remaining:** run and record the hands-on checklist in
+current Windows Terminal, then push the release tag so GitHub Pages, npm, and
+the release assets are published. Those are external release actions; the local
+implementation and artifact builds are complete.
 
 **Target:** adding an OpenAI-compatible vendor takes ≤30 lines. Currently 1.
 
