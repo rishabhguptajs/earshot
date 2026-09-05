@@ -29,3 +29,31 @@ jobs:
       - run: node packages/cli/bin/earshot.js doctor
       - run: bun run build:docs
       - run: bun run smoke:npm
+
+  # Records baselines; asserts nothing. Budgets need to know how much these
+  # numbers move on hosted runners when nothing is wrong, and that is collected
+  # here rather than guessed. Kept out of the `test` job so a noisy machine can
+  # never be the reason a pull request goes red.
+  bench:
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      # The startup cases spawn the real binary, so the build has to exist.
+      - run: bun run build
+      - run: bun run bench --save
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.os }}
+          path: bench/baselines/

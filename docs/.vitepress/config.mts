@@ -45,6 +45,7 @@ export default defineConfig({
           { text: 'Why it listens', link: '/listening' },
           { text: 'Roadmap', link: '/roadmap' },
           { text: 'Release and QA', link: '/release' },
+          { text: 'Performance baselines', link: '/performance' },
         ],
       },
     ],
