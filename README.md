@@ -9,19 +9,19 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](https://nodejs.org)
 [![Providers](https://img.shields.io/badge/providers-19-orange.svg)](docs/providers.md)
 
-[Quick start](#quick-start) · [Why](#why-another-one) · [Docs](docs/) · [Providers](docs/providers.md) · [Contributing](CONTRIBUTING.md) · [Roadmap](docs/roadmap.md)
+[Quick start](#quick-start) · [Why](#why-another-one) · [Docs](docs/index.md) · [Providers](docs/providers.md) · [Contributing](CONTRIBUTING.md) · [Roadmap](docs/roadmap.md)
 
 </div>
 
 ---
 
 > [!WARNING]
-> **earshot is pre-alpha, and has never been run against a live API.**
+> **earshot is pre-1.0. Provider behaviour still needs broader live-API coverage.**
 > The agent loop, tools, permissions, sessions, the TUI and the extension
-> surfaces are all built and tested — against a scripted provider. No real model
-> has answered it, no MCP server has been spawned for real, and nobody has driven
-> the TUI in a real terminal. See [status](#status) for what that means, and the
-> [roadmap](docs/roadmap.md) for what is coming.
+> surfaces are built and tested. OpenRouter has answered both a headless and an
+> interactive macOS terminal smoke test, and the suite spawns a real MCP fixture.
+> Broader live providers and the Windows Terminal release checklist remain. See
+> [status](#status) and the [roadmap](docs/roadmap.md).
 
 ## Why another one?
 
@@ -47,9 +47,9 @@ goes stale. See [Adding a provider](docs/adding-a-provider.md).
 
 ### 2. A real terminal UX, on Windows too
 
-Claude-Code-style inline scrollback, installable with `npm i -g earshot`, tested
-on Windows Terminal in CI rather than hoped for. Most terminal agents are either
-macOS-first or need a bespoke runtime. *(Planned — see [roadmap](docs/roadmap.md).)*
+Claude-Code-style inline scrollback, installable with `npm i -g earshot`, with
+native Windows CI and a hands-on Windows Terminal release checklist. Most
+terminal agents are either macOS-first or need a bespoke runtime.
 
 ### 3. It listens
 
@@ -70,12 +70,11 @@ See [Listening](docs/listening.md) for how each of these is specified and tested
 
 ## Quick start
 
-> Requires **Node ≥ 22** (or Bun ≥ 1.3). Not yet published to npm — see
-> [Installing from source](docs/getting-started.md#from-source).
+> Requires **Node ≥ 22** for the npm package. Standalone releases embed their runtime.
 
 ```bash
-git clone https://github.com/rishabhguptajs/earshot
-cd earshot && bun install && bun run build
+npm install --global earshot
+earshot doctor
 ```
 
 Point it at a provider by setting that provider's key:
@@ -87,9 +86,9 @@ export ANTHROPIC_API_KEY=sk-...
 Then:
 
 ```bash
-node packages/cli/bin/earshot.js models              # every model, with pricing
-node packages/cli/bin/earshot.js models claude-opus  # filter
-node packages/cli/bin/earshot.js -p "explain the provider registry"
+earshot models              # every model, with pricing
+earshot models claude-opus  # filter
+earshot -p "explain the provider registry"
 ```
 
 Full walkthrough: [Getting started](docs/getting-started.md).
@@ -105,7 +104,7 @@ earshot is built in milestones. Honest state of each:
 | **M2** Coding agent | Tools, permissions, sessions, Ink TUI | ✅ Done |
 | **M3** Listening | Scope contract, compaction, memory | ✅ Done |
 | **M4** Extensibility | MCP, skills, commands, hooks, subagents | ✅ Done |
-| **M5** Ship | Docs site, npm, binaries, Windows QA | ⬜ Planned |
+| **M5** Ship | Docs site, npm, binaries, Windows QA | 🟨 Release acceptance |
 
 **Works today:** the interactive TUI and `earshot -p`, both running the full
 agent loop; the permission system (five modes, `Tool(pattern)` rules,
@@ -115,19 +114,17 @@ end-of-turn verification; sessions with `--resume`, `--continue`, `/fork`,
 slash commands, hooks and subagents; a versioned headless JSON output; 896
 models with live pricing and cost accounting including prompt caching.
 
-**Never verified against a live API.** Every test runs against a scripted
-provider, and nobody has driven the TUI in a real terminal. If you have a key
-for anything, a single real turn is the most useful thing you can contribute —
-see the [roadmap](docs/roadmap.md#where-help-is-most-useful).
+**Live verification remains provider-specific.** The conformance suite uses
+scripted provider output, so each provider/model combination still benefits
+from real-world reports. See the [roadmap](docs/roadmap.md#where-help-is-most-useful).
 
 **Windows needs Git Bash.** `bash` uses Git for Windows and fails with an install
 pointer if it is missing, rather than falling back to PowerShell. One shell
 dialect on every platform keeps commands and permission rules portable.
 
-**Not verified against live APIs.** The 185 tests run against scripted provider
-output — including the whole agent loop. The bridge every adapter shares is well
-covered; individual vendors are not. If you have a key for a provider and hit a
-bug, [that's a very useful issue](https://github.com/rishabhguptajs/earshot/issues/new).
+The bridge every adapter shares is covered by the suite; individual vendors can
+still change behaviour independently. If you hit a live-provider bug,
+[that is a useful issue](https://github.com/rishabhguptajs/earshot/issues/new).
 
 ## How it fits together
 
@@ -177,8 +174,9 @@ still cheap to change. The highest-leverage things:
 - **Add a provider** — [one line for most vendors](docs/adding-a-provider.md).
 - **Drive the TUI in a real terminal** and report what it does. It has only ever
   been mounted against a fake stdout.
-- **Point it at an MCP server you use** — the protocol is tested against an
-  in-memory server, never a spawned one. See [Extending earshot](extending.md).
+- **Point it at an MCP server you use** — the protocol and a spawned fixture are
+  tested, but real server implementations still add useful coverage. See
+  [Extending earshot](docs/extending.md).
 - **Use it and tell us where it stopped listening** — scope creep, a prompt that
   should not have appeared, a question it should have asked.
 
