@@ -42,13 +42,14 @@ earshot -p "hello" --output-format json
 **Output formats**
 
 - `text` — response text streamed to stdout as it arrives
-- `json` — one object at the end: `text`, `model`, `usage`, `costUsd`
-- `stream-json` — newline-delimited events as they arrive, for piping
+- `json` — one `result` object at the end
+- `stream-json` — newline-delimited records as they arrive, ending with the same
+  `result` object
+
+Both JSON formats are a versioned contract; see [Headless output](headless.md)
+for the schema and what `earshot.v1` promises. `json@v1` pins it explicitly.
 
 `Ctrl-C` aborts the request; partial output is kept.
-
-> **No tools.** `-p` currently makes one model call. It cannot read or edit
-> files. The tool-calling loop arrives in M2.
 
 ## `earshot models`
 
