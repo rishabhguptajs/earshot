@@ -91,7 +91,11 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: bun install --frozen-lockfile
       - run: bun run build
-      - run: npm publish --access public --provenance
+      # No --provenance: npm can only verify a provenance bundle when the source
+      # repository is public, and this one is private. Publishing with the flag
+      # fails at the registry (E422) rather than degrading, so the choice is
+      # explicit. Restore it if the repository is ever made public.
+      - run: npm publish --access public
         working-directory: packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
