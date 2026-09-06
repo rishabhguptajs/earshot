@@ -7,7 +7,14 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 ## [Unreleased]
 
-Changes queued for the next release.
+Nothing queued yet.
+
+## [0.1.0] - 2026-09-06
+
+The first release. Pre-1.0 deliberately: the v1 compatibility guarantees are M7
+work and are not met, so a 1.0.0 would promise stability this release does not
+have. Headless output and ACP already carry their own version markers and their
+own promises - see [Compatibility](docs/compatibility.md).
 
 ### Added
 
@@ -112,5 +119,10 @@ Changes queued for the next release.
   [Compatibility](docs/compatibility.md).
 - Editor integration over ACP is covered by protocol tests; the hands-on Zed,
   JetBrains and Neovim checklist in [ACP](docs/acp.md) is not yet recorded.
+- A stdio MCP server occasionally fails to start on Windows with a socket error
+  from the spawn itself, roughly once in a dozen runs. It surfaces as
+  `mcp server "<name>" failed to start` and starting it again succeeds; it is
+  not a hang or a silent degradation. The cause is below earshot, in process
+  spawning, and is not reproducible on demand.
 - ChatGPT subscription sign-in for Codex models is deliberately unsupported;
   use an OpenAI API key. This is a product boundary, not a planned workaround.
