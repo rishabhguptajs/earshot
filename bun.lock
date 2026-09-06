@@ -13,7 +13,7 @@
     },
     "packages/acp": {
       "name": "@earshot/acp",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.4.0",
         "@earshot/core": "workspace:*",
@@ -21,8 +21,8 @@
       },
     },
     "packages/cli": {
-      "name": "earshot",
-      "version": "0.0.1",
+      "name": "@raegent/earshot",
+      "version": "0.1.0",
       "bin": {
         "earshot": "./bin/earshot.js",
       },
@@ -51,14 +51,14 @@
     },
     "packages/core": {
       "name": "@earshot/core",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
         "@earshot/providers": "workspace:*",
       },
     },
     "packages/mcp": {
       "name": "@earshot/mcp",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
         "@earshot/core": "workspace:*",
         "@earshot/providers": "workspace:*",
@@ -67,7 +67,7 @@
     },
     "packages/providers": {
       "name": "@earshot/providers",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "^5.0.73",
         "@ai-sdk/anthropic": "^4.0.49",
@@ -81,7 +81,7 @@
     },
     "packages/tui": {
       "name": "@earshot/tui",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
         "@earshot/core": "workspace:*",
         "ink": "^6",
@@ -253,6 +253,8 @@
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.30.0", "", { "dependencies": { "@hono/node-server": "^1.19.9 || ^2.0.5", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA=="],
 
     "@napi-rs/lzma-linux-x64-gnu": ["@napi-rs/lzma-linux-x64-gnu@1.5.1", "", { "os": "linux", "cpu": "x64" }, "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="],
+
+    "@raegent/earshot": ["@raegent/earshot@workspace:packages/cli"],
 
     "@rollup/rollup-android-arm-eabi": ["@rollup/rollup-android-arm-eabi@4.63.1", "", { "os": "android", "cpu": "arm" }, "sha512-UZ8sUxPTiHWYX9QNdJedb1kDZSpS1t/VPWBWGSgqHNi9w3Cu6IXvu2mzbhiTiPvtrqgTQJ+zqiAq2iPIPilpaQ=="],
 
@@ -471,8 +473,6 @@
     "devlop": ["devlop@1.1.0", "", { "dependencies": { "dequal": "^2.0.0" } }, "sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA=="],
 
     "dunder-proto": ["dunder-proto@1.0.1", "", { "dependencies": { "call-bind-apply-helpers": "^1.0.1", "es-errors": "^1.3.0", "gopd": "^1.2.0" } }, "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A=="],
-
-    "earshot": ["earshot@workspace:packages/cli"],
 
     "ecdsa-sig-formatter": ["ecdsa-sig-formatter@1.0.11", "", { "dependencies": { "safe-buffer": "^5.0.1" } }, "sha512-nagl3RYrbNv6kQkeJIpt6NJZy8twLB/2vtz6yN9Z4vRKHN4/QZJIEbqohALSgwKdnksuY3k5Addp5lg8sVoVcQ=="],
 
