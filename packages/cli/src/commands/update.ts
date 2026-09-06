@@ -156,10 +156,62 @@ export function compareVersions(a: string, b: string): number {
   return left.pre < right.pre ? -1 : 1;
 }
 
-export type Fetch = (url: string) => Promise<Response>;
+export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * While the repository is private, every release URL - the API and the asset
+ * downloads alike - answers an unauthenticated request with 404 rather than
+ * 403, so "not found" and "not allowed" are the same response. A token in the
+ * environment is the only thing that separates them, and `gh` already puts one
+ * there for the people who can see these releases at all.
+ */
+export function releaseAuth(env: NodeJS.ProcessEnv): RequestInit {
+  const token = env.EARSHOT_GITHUB_TOKEN ?? env.GITHUB_TOKEN ?? env.GH_TOKEN;
+  return token ? { headers: { authorization: `Bearer ${token}` } } : {};
+}
+
+/** What a 404 from a release URL actually means, given whether we had a token. */
+export function releaseNotFound(env: NodeJS.ProcessEnv): string {
+  return releaseAuth(env).headers === undefined
+    ? 'GitHub returned 404. The releases are not public, so this needs a token: ' +
+        'set GITHUB_TOKEN (or GH_TOKEN) to one that can read the repository.'
+    : 'GitHub returned 404 for the token in GITHUB_TOKEN; it may not have access ' +
+        'to this repository.';
+}
+
+export interface Release {
+  version: string;
+  /** Asset name to the API download URL for it. */
+  assets: Record<string, string>;
+}
+
+/**
+ * The newest release, with its assets addressed by their API URL rather than
+ * the `releases/download/...` browser URL. The browser URL ignores a bearer
+ * token and answers 404 for a private repository; the asset API endpoint
+ * accepts one, and works identically once the repository is public, so there is
+ * no reason to have two paths.
+ */
+export async function fetchRelease(fetchImpl: Fetch, env: NodeJS.ProcessEnv): Promise<Release> {
+  const response = await fetchImpl(RELEASE, releaseAuth(env));
+  if (response.status === 404) throw new Error(releaseNotFound(env));
+  if (!response.ok) throw new Error(`GitHub releases returned ${response.status}`);
+  const body = (await response.json()) as {
+    tag_name?: string;
+    assets?: { name: string; url: string }[];
+  };
+  if (!body.tag_name) throw new Error('GitHub returned a release with no tag');
+  const assets: Record<string, string> = {};
+  for (const asset of body.assets ?? []) assets[asset.name] = asset.url;
+  return { version: body.tag_name.replace(/^v/, ''), assets };
+}
 
 /** The newest published version for this install form. */
-export async function resolveLatest(kind: InstallKind, fetchImpl: Fetch): Promise<string> {
+export async function resolveLatest(
+  kind: InstallKind,
+  fetchImpl: Fetch,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
   if (kind === 'npm') {
     const response = await fetchImpl(REGISTRY);
     if (!response.ok) throw new Error(`npm registry returned ${response.status}`);
@@ -167,11 +219,7 @@ export async function resolveLatest(kind: InstallKind, fetchImpl: Fetch): Promis
     if (!body.version) throw new Error('npm registry returned no version');
     return body.version;
   }
-  const response = await fetchImpl(RELEASE);
-  if (!response.ok) throw new Error(`GitHub releases returned ${response.status}`);
-  const body = (await response.json()) as { tag_name?: string };
-  if (!body.tag_name) throw new Error('GitHub returned a release with no tag');
-  return body.tag_name.replace(/^v/, '');
+  return (await fetchRelease(fetchImpl, env)).version;
 }
 
 /**
@@ -201,6 +249,7 @@ export interface UpdateOptions {
   err?: (text: string) => void;
   /** Injected so the Windows replace path is testable from any host. */
   platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
 }
 
 const installCommand: Record<Manager, string> = {
@@ -232,7 +281,7 @@ export async function runUpdate(options: UpdateOptions = {}): Promise<number> {
       },
       isProjectRoot: (dir) => existsSync(join(dir, 'package.json')),
     });
-  const fetchImpl = options.fetch ?? ((url: string) => fetch(url));
+  const fetchImpl = options.fetch ?? ((url: string, init?: RequestInit) => fetch(url, init));
 
   if (install.kind === 'source' || install.kind === 'unknown') {
     err(`earshot update: ${install.reason}\n`);
@@ -248,9 +297,17 @@ export async function runUpdate(options: UpdateOptions = {}): Promise<number> {
     return 2;
   }
 
+  // The binary path needs the asset URLs from the same release it read the
+  // version off, so it fetches the release rather than just the version.
   let latest: string;
+  let release: Release | undefined;
   try {
-    latest = await resolveLatest(install.kind, fetchImpl);
+    if (install.kind === 'binary') {
+      release = await fetchRelease(fetchImpl, options.env ?? process.env);
+      latest = release.version;
+    } else {
+      latest = await resolveLatest(install.kind, fetchImpl, options.env ?? process.env);
+    }
   } catch (error) {
     err(`earshot update: ${(error as Error).message}\n`);
     return 1;
@@ -298,7 +355,7 @@ export async function runUpdate(options: UpdateOptions = {}): Promise<number> {
     return 0;
   }
 
-  return await updateBinary(install, latest, options, out, err);
+  return await updateBinary(install, release as Release, options, out, err);
 }
 
 function runCommand(command: string, args: string[]) {
@@ -325,7 +382,7 @@ async function defaultConfirm(question: string): Promise<boolean> {
 
 async function updateBinary(
   install: Install,
-  latest: string,
+  release: Release,
   options: UpdateOptions,
   out: (text: string) => void,
   err: (text: string) => void,
@@ -333,7 +390,8 @@ async function updateBinary(
   const target = install.path as string;
   const asset = install.asset as string;
   const dir = dirname(target);
-  const fetchImpl = options.fetch ?? ((url: string) => fetch(url));
+  const latest = release.version;
+  const fetchImpl = options.fetch ?? ((url: string, init?: RequestInit) => fetch(url, init));
 
   // Sweep what a previous Windows update had to leave behind (see below).
   await sweepStale(dir, target);
@@ -356,16 +414,31 @@ async function updateBinary(
     return 0;
   }
 
-  const base = `https://github.com/${REPO}/releases/download/v${latest}`;
+  const assetUrl = release.assets[asset];
+  const sumsUrl = release.assets.SHA256SUMS;
+  if (assetUrl === undefined || sumsUrl === undefined) {
+    err(`earshot update: release v${latest} does not publish ${assetUrl ? 'SHA256SUMS' : asset}\n`);
+    return 1;
+  }
+
   const temp = join(dir, `.earshot-update-${process.pid}.tmp`);
   try {
+    // The asset API endpoint serves the bytes only when asked for them; without
+    // this it answers with the asset's JSON metadata instead.
+    const auth = releaseAuth(options.env ?? process.env);
+    const octet: RequestInit = {
+      ...auth,
+      headers: { ...(auth.headers as Record<string, string>), accept: 'application/octet-stream' },
+    };
+
     out('  downloading… ');
-    const download = await fetchImpl(`${base}/${asset}`);
+    const download = await fetchImpl(assetUrl, octet);
+    if (download.status === 404) throw new Error(releaseNotFound(options.env ?? process.env));
     if (!download.ok) throw new Error(`downloading ${asset} returned ${download.status}`);
     const bytes = new Uint8Array(await download.arrayBuffer());
 
     out('verifying SHA256… ');
-    const sumsResponse = await fetchImpl(`${base}/SHA256SUMS`);
+    const sumsResponse = await fetchImpl(sumsUrl, octet);
     if (!sumsResponse.ok) throw new Error(`SHA256SUMS returned ${sumsResponse.status}`);
     const expected = findChecksum(await sumsResponse.text(), asset);
     if (expected === undefined) throw new Error(`SHA256SUMS does not list ${asset}`);

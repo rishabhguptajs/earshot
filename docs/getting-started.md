@@ -51,6 +51,11 @@ Nothing happens without a confirmation — `--yes` skips it, `--check` reports a
 exits **4** if an update is available. See
 [`earshot update`](cli.md#earshot-update).
 
+While this repository is private, updating a **standalone binary** needs a
+GitHub token that can read it — `GITHUB_TOKEN`, `GH_TOKEN` or
+`EARSHOT_GITHUB_TOKEN`. Updating an npm install does not; that package is
+public.
+
 A source checkout updates with git, not this command.
 
 ### From source

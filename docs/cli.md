@@ -206,6 +206,14 @@ overwritten, but it can be renamed on the same volume, so the running image is
 moved to `earshot.exe.old-<pid>` and the new one takes its place; deleting that
 leftover fails while the process lives, and the next `earshot update` sweeps it.
 
+Assets are fetched through the GitHub asset API rather than the
+`releases/download/…` browser URL, because that URL ignores a bearer token and
+answers 404 for a private repository. **While this repository is private, a
+binary update needs a token**: set `GITHUB_TOKEN` (or `GH_TOKEN`, or
+`EARSHOT_GITHUB_TOKEN`) to one that can read the repository. Without it every
+release URL returns 404, and `earshot update` says so rather than repeating the
+status. The npm path needs no token — that package is public.
+
 A symlinked binary is resolved first, so the file is replaced rather than the
 link. Running from a source checkout is not updatable and exits 2 — use git.
 Without a TTY to answer the prompt, it reports and changes nothing.
@@ -294,5 +302,6 @@ Meaningful, so CI can branch on them:
 |---|---|
 | `EARSHOT_CONFIG_DIR` | Override the config directory (default `~/.config/earshot`, `%APPDATA%\earshot` on Windows) |
 | `EARSHOT_DATA_DIR` | Override the data directory (sessions) |
+| `EARSHOT_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` | Read access for `earshot update`'s binary path, in that order of preference. Required while the repository is private |
 | `OLLAMA_HOST` | Ollama base URL (default `http://127.0.0.1:11434`) |
 | *provider keys* | See [Providers](providers.md) |

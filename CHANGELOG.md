@@ -9,6 +9,28 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 Nothing queued yet.
 
+## [0.3.1] - 2026-09-06
+
+### Fixed
+
+- **`earshot update` could not update a standalone binary.** Two faults, both
+  found by running a real 0.2.0 binary against the live 0.3.0 release rather
+  than against the test doubles, which had passed:
+
+  - The default `fetch` wrapper took only a URL and dropped the `init`
+    argument, so every authorization header the code added was silently
+    discarded. The injected fetch in the tests honored `init`, so the tests
+    could not see it.
+  - Assets were fetched from `releases/download/…`, which ignores a bearer
+    token and answers 404 for a private repository. They now go through the
+    GitHub asset API, which accepts one and behaves identically once the
+    repository is public.
+
+  Release requests now send `EARSHOT_GITHUB_TOKEN`, `GITHUB_TOKEN` or
+  `GH_TOKEN` when one is set, and a 404 — which is what GitHub returns for
+  "private" as well as "missing" — is reported as the missing-token problem it
+  usually is instead of as a bare status code.
+
 ## [0.3.0] - 2026-09-06
 
 ### Added

@@ -44,6 +44,16 @@ function capture() {
 
 const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
+/** A release payload shaped like the API's, with asset URLs rather than tags. */
+const release = (version: string) =>
+  json({
+    tag_name: `v${version}`,
+    assets: [
+      { name: 'earshot-darwin-arm64', url: 'https://api.github.com/…/assets/1' },
+      { name: 'SHA256SUMS', url: 'https://api.github.com/…/assets/2' },
+    ],
+  });
+
 describe('detectInstall', () => {
   test('separates a compiled binary from Bun running the source', () => {
     const binary = detectInstall({ ...OBSERVED.binary, ...host });
@@ -232,8 +242,8 @@ describe('earshot update', () => {
         current: '0.2.0',
         yes: true,
         fetch: async (url) => {
-          if (url.includes('api.github.com')) return json({ tag_name: 'v0.3.1' });
-          if (url.endsWith('SHA256SUMS')) {
+          if (url.endsWith('releases/latest')) return release('0.3.1');
+          if (url.endsWith('/assets/2')) {
             return new Response(`${hash}  artifacts/earshot-darwin-arm64\n`, { status: 200 });
           }
           return new Response(payload, { status: 200 });
@@ -258,8 +268,8 @@ describe('earshot update', () => {
         current: '0.2.0',
         yes: true,
         fetch: async (url) => {
-          if (url.includes('api.github.com')) return json({ tag_name: 'v0.3.1' });
-          if (url.endsWith('SHA256SUMS')) {
+          if (url.endsWith('releases/latest')) return release('0.3.1');
+          if (url.endsWith('/assets/2')) {
             return new Response(`${'0'.repeat(64)}  artifacts/earshot-darwin-arm64\n`, {
               status: 200,
             });
@@ -292,8 +302,8 @@ describe('earshot update', () => {
         current: '0.2.0',
         yes: true,
         fetch: async (url) => {
-          if (url.includes('api.github.com')) return json({ tag_name: 'v0.3.1' });
-          if (url.endsWith('SHA256SUMS')) {
+          if (url.endsWith('releases/latest')) return release('0.3.1');
+          if (url.endsWith('/assets/2')) {
             return new Response(`${hash}  artifacts/earshot-darwin-arm64\n`, { status: 200 });
           }
           return new Response(payload, { status: 200 });
@@ -315,7 +325,7 @@ describe('earshot update', () => {
         current: '0.2.0',
         confirm: async () => false,
         fetch: async (url) => {
-          if (url.includes('api.github.com')) return json({ tag_name: 'v0.3.1' });
+          if (url.endsWith('releases/latest')) return release('0.3.1');
           throw new Error('should not have downloaded');
         },
         out: out.write,
@@ -357,6 +367,96 @@ describe('earshot update', () => {
     expect(attempt).rejects.toThrow('EPERM');
     await attempt.catch(() => {});
     expect(order.at(-1)).toBe(`C:\\bin\\earshot.exe.old-${process.pid} -> C:\\bin\\earshot.exe`);
+  });
+
+  test('explains a 404 as a missing token rather than repeating the status', async () => {
+    const err = capture();
+    const code = await runUpdate({
+      install: { kind: 'binary', path: '/bin/earshot', asset: 'earshot-darwin-arm64' },
+      current: '0.2.0',
+      env: {},
+      fetch: async () => new Response('', { status: 404 }),
+      out: () => {},
+      err: err.write,
+    });
+    expect(code).toBe(1);
+    expect(err.text()).toContain('GITHUB_TOKEN');
+  });
+
+  test('sends the token from the environment on every release request', async () => {
+    await withTempDir(async (dir) => {
+      const target = join(dir, 'earshot');
+      await writeFile(target, 'old binary');
+      const payload = new TextEncoder().encode('new binary');
+      const hash = createHash('sha256').update(payload).digest('hex');
+      const seen: (string | undefined)[] = [];
+
+      const code = await runUpdate({
+        install: { kind: 'binary', path: target, asset: 'earshot-darwin-arm64' },
+        current: '0.2.0',
+        yes: true,
+        env: { GITHUB_TOKEN: 'ghp_test' },
+        fetch: async (url, init) => {
+          seen.push((init?.headers as Record<string, string> | undefined)?.authorization);
+          if (url.endsWith('releases/latest')) return release('0.3.1');
+          if (url.endsWith('/assets/2')) {
+            return new Response(`${hash}  artifacts/earshot-darwin-arm64\n`, { status: 200 });
+          }
+          return new Response(payload, { status: 200 });
+        },
+        out: () => {},
+      });
+
+      expect(code).toBe(0);
+      // The API call, the asset download, and SHA256SUMS all carry it.
+      expect(seen).toEqual(['Bearer ghp_test', 'Bearer ghp_test', 'Bearer ghp_test']);
+    });
+  });
+
+  test('stops when the release does not publish an asset for this host', async () => {
+    await withTempDir(async (dir) => {
+      const target = join(dir, 'earshot');
+      await writeFile(target, 'old binary');
+      const err = capture();
+      const code = await runUpdate({
+        install: { kind: 'binary', path: target, asset: 'earshot-linux-arm64' },
+        current: '0.2.0',
+        yes: true,
+        fetch: async () => release('0.3.1'),
+        out: () => {},
+        err: err.write,
+      });
+      expect(code).toBe(1);
+      expect(err.text()).toContain('earshot-linux-arm64');
+      expect(await readFile(target, 'utf8')).toBe('old binary');
+    });
+  });
+
+  test('asks the asset endpoint for bytes rather than its metadata', async () => {
+    await withTempDir(async (dir) => {
+      const target = join(dir, 'earshot');
+      await writeFile(target, 'old binary');
+      const payload = new TextEncoder().encode('new binary');
+      const hash = createHash('sha256').update(payload).digest('hex');
+      const accepts: (string | undefined)[] = [];
+
+      await runUpdate({
+        install: { kind: 'binary', path: target, asset: 'earshot-darwin-arm64' },
+        current: '0.2.0',
+        yes: true,
+        fetch: async (url, init) => {
+          if (url.endsWith('releases/latest')) return release('0.3.1');
+          accepts.push((init?.headers as Record<string, string> | undefined)?.accept);
+          if (url.endsWith('/assets/2')) {
+            return new Response(`${hash}  artifacts/earshot-darwin-arm64\n`, { status: 200 });
+          }
+          return new Response(payload, { status: 200 });
+        },
+        out: () => {},
+      });
+
+      expect(accepts).toEqual(['application/octet-stream', 'application/octet-stream']);
+    });
   });
 
   test('a network failure is exit 1, not a crash', async () => {
