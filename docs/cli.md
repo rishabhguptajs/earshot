@@ -169,20 +169,48 @@ Typed at the prompt during an interactive session.
 
 | Command | Effect |
 |---|---|
+| `/help` | List the commands you can type |
+| `/model [ref]` | Show the model in use, or switch to another for the rest of the session |
 | `/mode <plan\|ask\|accept-edits\|auto\|yolo>` | Change the permission mode |
 | `/plan <task>` | Draft a plan in plan mode and write it to a file |
 | `/plan edit` | Open the plan in `$VISUAL`/`$EDITOR`, or print its path |
 | `/plan approve` | Pin the plan **as the file now reads** for the rest of the run |
-| `/plan show` / `/plan clear` | Read it back / unpin it |
+| `/plan show` | Read the plan back |
+| `/plan clear` | Unpin the plan |
+| `/compact` | Summarise the session so far and free up the context window |
+| `/context` | Show what is in the context window and what compaction has dropped |
+| `/cost [usd]` | Show what this session has spent, or set the budget ceiling; 0 removes it |
+| `/todo` | Show the agent's current todo list |
+| `/permissions` | Show the permission mode and the rules in force |
+| `/init` | Write an `AGENTS.md` describing this project |
 | `/skills` | List discovered skills and user-defined commands |
-| `/<name>` | Run a user-defined command from `.earshot/commands/<name>.md` |
 | `/memory` | List remembered preferences, each with the sentence it came from |
-| `/memory forget <id>` | Delete one |
+| `/memory forget <id>` | Delete one remembered preference |
 | `/tree` | List this session's prompts, numbered |
 | `/rewind <n>` | Go back to the state before prompt `n`; nothing is deleted |
 | `/fork <n>` | Branch from prompt `n` into a new transcript |
-| `/undo` | Revert the last tool batch's file changes from this session; again to step back further |
+| `/undo` | Revert the last tool batch's file changes; again to step back further |
 | `/exit` | Quit |
+| `/<name>` | Run a user-defined command from `.earshot/commands/<name>.md` |
+
+This table is checked against the command registry in
+`packages/tui/src/commands.ts` by `packages/tui/test/commands.test.ts`, which is
+also what the in-session `/` menu reads: a command cannot be documented without
+being dispatchable, or dispatchable without appearing in both.
+
+`/model` switches for the rest of the session, resolving the reference through
+the same registry and credential order the CLI uses; a reference with no
+credentials is reported and the session stays on the model it had.
+
+`/cost` with an amount is the same ceiling as `--max-cost`, and `0` removes it
+the same way. `/compact` runs the compaction that would otherwise happen at 80%
+of the window — it appends a summary and never rewrites history, exactly as the
+automatic one does.
+
+Typing `/` opens that menu and each further keystroke filters it. `↑`/`↓` move
+the selection, `tab` completes the highlighted command into the line without
+running it, `enter` runs it, and `esc` closes the menu — `esc` interrupts a turn
+only when the menu is not open.
 
 Two keystrokes are bound rather than typed: when a prompt contains a correction
 ("use bun, not npm"), `ctrl+r` remembers it for this project and `ctrl+g`

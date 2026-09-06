@@ -28,7 +28,7 @@ import type { HookEvent } from './hooks/config.ts';
 import type { HookOutcome } from './hooks/run.ts';
 import type { HookRunner } from './hooks/runner.ts';
 import type { ResolvedModel } from './model.ts';
-import { streamModel, turnCost } from './model.ts';
+import { resolveModel, streamModel, turnCost } from './model.ts';
 import {
   decide,
   type PermissionMode,
@@ -170,6 +170,8 @@ export class Agent {
   /** Messages typed while a turn is running, injected at the next model call. */
   private readonly queued: Message[] = [];
   private rules: Rule[];
+  /** Mutable because `/model` swaps it; `options.model` is only the initial one. */
+  private resolved: ResolvedModel;
   private mode: PermissionMode;
   private totalCostUsd = 0;
   private maxCostUsd: number | undefined;
@@ -240,6 +242,34 @@ export class Agent {
     this.askFn = options.ask;
     this.systemPrompt = options.system;
     this.maxCostUsd = options.maxCostUsd;
+    this.resolved = options.model;
+  }
+
+  /** The model this session is currently calling. */
+  get model(): ResolvedModel {
+    return this.resolved;
+  }
+
+  /**
+   * Switches model mid-session.
+   *
+   * Resolved through the same `resolveModel` the CLI uses, so a reference with
+   * no credentials fails here with `MissingCredentialsError` and the session
+   * keeps the model it had - a half-applied switch would leave the agent
+   * pricing one model's tokens against another's rates.
+   */
+  async changeModel(ref: string): Promise<ResolvedModel> {
+    const resolved = await resolveModel(this.options.registry, ref);
+    this.resolved = resolved;
+    return resolved;
+  }
+
+  /**
+   * The permission rules in force, newest first. A copy: a caller that could
+   * push onto this array would be adding rules without going through the gate.
+   */
+  get permissionRules(): readonly Rule[] {
+    return [...this.rules];
   }
 
   get budgetUsd(): number | undefined {
@@ -312,7 +342,7 @@ export class Agent {
 
   /** Estimated tokens in the last request, and the window they have to fit in. */
   get contextUse(): { tokens: number; window: number } {
-    return { tokens: this.lastRequestTokens, window: this.options.model.model.contextWindow ?? 0 };
+    return { tokens: this.lastRequestTokens, window: this.resolved.model.contextWindow ?? 0 };
   }
 
   /** Files read or written this session, in the order they were first touched. */
@@ -370,13 +400,13 @@ export class Agent {
         : prompt.map((part) => ({ ...part }));
     if (
       promptParts.some((part) => part.type === 'image') &&
-      !this.options.model.model.capabilities.vision
+      !this.resolved.model.capabilities.vision
     ) {
       yield {
         type: 'error',
         error: {
           kind: 'invalid_request',
-          message: `${this.options.model.model.name} does not support image input`,
+          message: `${this.resolved.model.name} does not support image input`,
           retryable: false,
         },
       };
@@ -422,7 +452,7 @@ export class Agent {
     });
 
     const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_STEPS;
-    const modelName = `${this.options.model.provider.id}/${this.options.model.model.id}`;
+    const modelName = `${this.resolved.provider.id}/${this.resolved.model.id}`;
 
     for (let step = 0; step < maxSteps; step++) {
       if (signal.aborted) {
@@ -455,7 +485,7 @@ export class Agent {
       let assistant: Message | undefined;
       let failed: EarshotError | undefined;
 
-      for await (const event of streamModel(this.options.registry, this.options.model, {
+      for await (const event of streamModel(this.options.registry, this.resolved, {
         system: this.effectiveSystem,
         messages,
         tools: this.offeredTools(),
@@ -470,7 +500,7 @@ export class Agent {
             break;
           case 'finish': {
             assistant = event.message;
-            const costUsd = turnCost(this.options.model.model, event.usage);
+            const costUsd = turnCost(this.resolved.model, event.usage);
             this.addCost(costUsd);
             yield { type: 'usage', usage: event.usage, costUsd };
             break;
@@ -911,10 +941,28 @@ export class Agent {
 
   /** Compacts if the shaped request would still be too large for the window. */
   private async *prepareRequest(signal: AbortSignal): AsyncGenerator<AgentEvent> {
-    const window = this.options.model.model.contextWindow ?? 0;
+    const window = this.resolved.model.contextWindow ?? 0;
     const policy = { threshold: 0.8, keepRecentMessages: 8, ...this.options.compaction };
     const shaped = this.requestMessages();
     if (!shouldCompact(shaped, this.effectiveSystem, window, policy)) return;
+    yield* this.runCompaction(signal);
+  }
+
+  /**
+   * Compacts now, whatever the window is at.
+   *
+   * `/compact` is the same operation the 80% threshold performs, asked for
+   * early - before a long tool result pushes the session over on its own. It
+   * appends, like every other compaction: nothing in history is rewritten.
+   */
+  async *compactNow(signal: AbortSignal): AsyncGenerator<AgentEvent> {
+    yield* this.runCompaction(signal);
+  }
+
+  private async *runCompaction(signal: AbortSignal): AsyncGenerator<AgentEvent> {
+    const window = this.resolved.model.contextWindow ?? 0;
+    const policy = { threshold: 0.8, keepRecentMessages: 8, ...this.options.compaction };
+    const shaped = this.requestMessages();
 
     const result = await compact({
       messages: shaped,
@@ -946,7 +994,7 @@ export class Agent {
   /** One extra model call, with no tools: the summary that compaction stands on. */
   private async summarise(messages: Message[], signal: AbortSignal): Promise<string> {
     let text = '';
-    for await (const event of streamModel(this.options.registry, this.options.model, {
+    for await (const event of streamModel(this.options.registry, this.resolved, {
       system: SUMMARY_PROMPT,
       messages: [...messages, { role: 'user', content: [{ type: 'text', text: SUMMARY_PROMPT }] }],
       abortSignal: signal,
