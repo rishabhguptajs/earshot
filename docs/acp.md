@@ -2,7 +2,8 @@
 
 `earshot acp` runs an [Agent Client Protocol](https://agentclientprotocol.com/)
 server over newline-delimited JSON on stdin and stdout. It uses stable ACP v1;
-the draft v2 protocol is deliberately not enabled.
+the draft v2 protocol is deliberately not enabled. What that version promises is
+in [Compatibility](compatibility.md).
 
 ```bash
 earshot acp --model anthropic/claude-opus-5

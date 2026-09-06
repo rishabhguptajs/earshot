@@ -34,6 +34,9 @@ Every object earshot writes in a JSON format carries a `schema` field:
 earshot's internal event type is deliberately not what gets written. It is ours
 to rename; the stream is not.
 
+The full promise, alongside ACP's and a list of the surfaces that carry no
+promise yet, is in [Compatibility](compatibility.md).
+
 ## `--output-format json`
 
 One object on stdout when the turn ends.
@@ -42,7 +45,7 @@ One object on stdout when the turn ends.
 |---|---|---|
 | `schema` | string | `earshot.v1` |
 | `type` | string | Always `result` |
-| `subtype` | string | `success`, `error`, `interrupted`, `max_steps` |
+| `subtype` | string | `success`, `error`, `interrupted`, `max_steps`, `budget` |
 | `isError` | boolean | True unless `subtype` is `success` |
 | `text` | string | The assistant's response text for the turn |
 | `costUsd` | number | Session spend, including any subagents |
@@ -70,6 +73,7 @@ thing.
 | `tool_result` | `toolCallId`, `toolName`, `isError`, `output` |
 | `permission` | `tool`, `target`, `title`, `reason` |
 | `usage` | `usage`, `costUsd` |
+| `budget` | `spentUsd`, `limitUsd`, `raisedTo?` — `raisedTo` absent means the run stopped rather than being given a higher limit |
 | `compacted` | `replaced` |
 | `scope` | `kind`, `summary`, `accepted` |
 | `verification` | `command`, `exitCode`, `output` |
