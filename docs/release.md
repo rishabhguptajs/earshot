@@ -33,7 +33,7 @@ Automation catches crashes; a terminal UI still needs human eyes. Test the
 release candidate in current Windows Terminal on Windows 11, using both a
 PowerShell tab and a Git Bash tab:
 
-- Install with `npm install --global earshot@<version>` and confirm `where.exe earshot`.
+- Install with `npm install --global @raegent/earshot@<version>` and confirm `where.exe earshot`.
 - Run the standalone `.exe` separately and confirm both builds print the same version.
 - Run `earshot doctor`; Git Bash must be found and no DA1/DCS probe may appear or hang.
 - Resize narrower and wider during a streamed response; completed output must remain in scrollback.

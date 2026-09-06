@@ -5,7 +5,7 @@ deny-first permissions, explicit scope, steerable turns, append-only history,
 and honest end-of-turn verification.
 
 ```bash
-npm install --global earshot
+npm install --global @raegent/earshot
 earshot doctor
 earshot models
 earshot
