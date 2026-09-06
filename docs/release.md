@@ -41,6 +41,9 @@ PowerShell tab and a Git Bash tab:
 - Run a Bash tool command containing a pipeline and quoted path with spaces.
 - Interrupt a streaming response and a long-running command with Ctrl-C.
 - Exercise `/tree`, `/rewind`, `/fork`, and `/undo` in a temporary Git repository.
+- Start a stdio MCP server several times and note any failure to start. CI has
+  seen this fail intermittently on Windows during process spawn; a hands-on run
+  is the only place a rate rather than a single occurrence gets observed.
 - Close and reopen Windows Terminal, then resume with `earshot --continue`.
 - Record Windows, Windows Terminal, Node, npm, Git for Windows, and earshot versions in the release issue.
 

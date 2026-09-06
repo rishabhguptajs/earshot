@@ -7,7 +7,14 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 ## [Unreleased]
 
-Changes queued for the next release.
+Nothing queued yet.
+
+## [0.1.0] - 2026-09-06
+
+The first release. Pre-1.0 deliberately: the v1 compatibility guarantees are M7
+work and are not met, so a 1.0.0 would promise stability this release does not
+have. Headless output and ACP already carry their own version markers and their
+own promises - see [Compatibility](docs/compatibility.md).
 
 ### Added
 
@@ -69,11 +76,53 @@ Changes queued for the next release.
   streaming, parallel tool calls, reasoning round-trip, abort, usage, finish
   reasons and error classification.
 
+### Fixed
+
+- **Session repair on resume** — a session killed mid-turn could leave tool calls
+  with no result parts, which a provider rejects, so `--resume` failed on the
+  first turn before the user had done anything. Resuming now appends results for
+  the unanswered calls and reports that it did. The repair is an append like
+  every other change to a transcript; the abandoned turn stays on disk exactly as
+  the crash left it. The synthesised results report the outcome as *unknown*
+  rather than as a failure, because a process killed after a write completed
+  still wrote the file.
+- **`/undo` reaching into another session** — the snapshot store is keyed by
+  working directory, so undo stepped back through whatever was most recent in the
+  directory. After a crash and a resume that meant reverting a batch the user had
+  never watched run. Snapshots now record the session that took them and undo is
+  scoped to it.
+- **Windows CI** — `earshot doctor`'s injected platform did not reach shell
+  resolution, so a test naming Linux took the Git Bash branch on the Windows
+  runner. Two further failures in the npm smoke test, which had only ever run on
+  POSIX, were behind it. The shipped binary was unaffected on all three.
+
+### Changed
+
+- **Undo history from before this release is unreachable.** Existing snapshots
+  record no session, and crediting them to whoever asks is the bug above. They
+  remain on disk and nothing is deleted.
+- **The v1 compatibility contract is written down and tested** — see
+  [Compatibility](docs/compatibility.md). Record types and field names for
+  `earshot.v1` are locked against the reference documentation in both directions,
+  so a rename fails a test while an addition does not. ACP now rejects
+  client-provided MCP servers with a reason the client can read; it previously
+  threw a plain error that JSON-RPC reported as "Internal error".
+
 ### Known limitations
 
 - Provider conformance is tested with scripted output; live behaviour still
   needs coverage for each provider/model combination.
 - Windows CI runs natively, but a release still requires the hands-on Windows
   Terminal checklist in [the release guide](docs/release.md).
+- Configuration, the transcript format and the extension API carry no version
+  marker and no compatibility promise yet; see
+  [Compatibility](docs/compatibility.md).
+- Editor integration over ACP is covered by protocol tests; the hands-on Zed,
+  JetBrains and Neovim checklist in [ACP](docs/acp.md) is not yet recorded.
+- A stdio MCP server occasionally fails to start on Windows with a socket error
+  from the spawn itself, roughly once in a dozen runs. It surfaces as
+  `mcp server "<name>" failed to start` and starting it again succeeds; it is
+  not a hang or a silent degradation. The cause is below earshot, in process
+  spawning, and is not reproducible on demand.
 - ChatGPT subscription sign-in for Codex models is deliberately unsupported;
   use an OpenAI API key. This is a product boundary, not a planned workaround.
