@@ -3,7 +3,11 @@ import { join } from 'node:path';
 
 const targets = {
   'darwin-arm64': 'bun-darwin-arm64',
-  'darwin-x64': 'bun-darwin-x64',
+  // The non-baseline target assumes AVX2. Real Intel Macs old enough to lack
+  // it hit the same "Illegal instruction" crash as Rosetta 2 does translating
+  // it on Apple Silicon - baseline is the only target that runs everywhere
+  // x64 macOS actually is, CI included.
+  'darwin-x64': 'bun-darwin-x64-baseline',
   'linux-x64': 'bun-linux-x64',
   'linux-arm64': 'bun-linux-arm64',
   'windows-x64': 'bun-windows-x64',
