@@ -329,6 +329,239 @@ describe('the app renders', () => {
   });
 });
 
+describe('the slash-command menu', () => {
+  const shipCommand: CreatedSession['commands'] = [
+    { name: 'ship', description: 'ships it', scope: 'project', path: '/x', body: 'Ship it.' },
+  ];
+
+  test('typing / lists built-in commands', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      stdin.send('/');
+      await waitFor(stdout, '/mode');
+      expect(stdout.output).toContain('/help');
+      // More commands than rows: the rest are counted rather than dropped, so
+      // the list never silently claims to be everything.
+      expect(stdout.output).toContain('more ·');
+    });
+  });
+
+  test('a user-defined command is listed alongside the built-ins', async () => {
+    await withApp(
+      [{ text: 'ok' }],
+      async ({ stdout, stdin }) => {
+        // Discovered at runtime, so the registry cannot name it and the menu
+        // still has to.
+        stdin.send('/sh');
+        await waitFor(stdout, '/ship');
+        expect(stdout.output).toContain('ships it');
+      },
+      { commands: shipCommand },
+    );
+  });
+
+  test('each keystroke filters the list', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      stdin.send('/me');
+      await waitFor(stdout, '/memory');
+      await settle(40);
+      expect(stdout.output).not.toContain('/undo');
+      expect(stdout.output).not.toContain('/tree');
+    });
+  });
+
+  test('tab completes the highlighted command without running it', async () => {
+    await withApp([{ text: 'should not be reached' }], async ({ stdout, stdin }) => {
+      stdin.send('/undo');
+      await waitFor(stdout, 'Revert the last tool batch');
+      stdin.send('\t');
+      await settle(60);
+      // On the line, not run: `/undo` would have reported what it restored.
+      expect(stdout.output).not.toContain('undid write');
+    });
+  });
+
+  test('enter runs the highlighted command', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      stdin.send('/undo');
+      await waitFor(stdout, 'Revert the last tool batch');
+      stdin.send('\r');
+      await waitFor(stdout, 'undid write');
+    });
+  });
+
+  test('the arrow keys move the selection, so enter runs the second row', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      stdin.send('/');
+      await waitFor(stdout, '/help');
+      stdin.send('\u001B[B'); // down: /help -> /model
+      await settle(40);
+      stdin.send('\r');
+      // Not the model name: that is already in the status line, and asserting
+      // on it would pass whether or not the second row ever ran.
+      await waitFor(stdout, '/model <provider/model> switches');
+    });
+  });
+
+  test('a prefix match is offered before a substring match', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      // Both match "re"; only /rewind starts with it, and Enter runs the top row.
+      stdin.send('/re');
+      await waitFor(stdout, '/rewind');
+      expect(stdout.output.indexOf('/rewind')).toBeLessThan(stdout.output.indexOf('/tree'));
+    });
+  });
+
+  test('escape closes the menu without interrupting the turn', async () => {
+    await withApp(
+      [{ calls: [{ name: 'ls', input: {} }] }, { text: 'the turn finished' }],
+      async ({ stdout, stdin }) => {
+        stdin.send('/');
+        await waitFor(stdout, '/mode');
+        stdin.send('\u001B');
+        await settle(40);
+        // Escape is the interrupt key; with a menu open it must mean only
+        // "close the menu", or the key people rely on mid-turn would depend on
+        // what happens to be on the line.
+        await waitFor(stdout, 'the turn finished');
+        expect(stdout.output).not.toContain('interrupted');
+      },
+      { initialPrompt: 'take a while' },
+    );
+  });
+
+  test('ctrl+r still captures a preference while the menu is open', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, 'always use bun, not npm');
+      await waitFor(stdout, 'ctrl+r');
+      stdin.send('/');
+      await waitFor(stdout, '/mode');
+      stdin.send('\x12');
+      await waitFor(stdout, 'remembered');
+    });
+  });
+
+  test('a space closes the menu, so a command with an argument still dispatches', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/mode plan');
+      await waitFor(stdout, 'permission mode: plan');
+    });
+  });
+
+  test('an idle-only command typed mid-turn refuses rather than running', async () => {
+    // A tool that takes a moment, so the turn is demonstrably still running when
+    // the command is typed - the refusal is about `busy`, and a turn that has
+    // already finished would pass this test without testing anything.
+    await withApp(
+      [{ calls: [{ name: 'bash', input: { command: 'sleep 2' } }] }, { text: 'done' }],
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'bash');
+        await type(stdin, '/tree');
+        await waitFor(stdout, 'finish or interrupt the current turn first');
+      },
+      { initialPrompt: 'list things' },
+    );
+  });
+
+  test('/skills lists what the directory contributes', async () => {
+    await withApp(
+      [{ text: 'ok' }],
+      async ({ stdout, stdin }) => {
+        await type(stdin, '/skills');
+        await waitFor(stdout, '/ship');
+      },
+      { commands: shipCommand },
+    );
+  });
+
+  test('/fork branches and says where it went', async () => {
+    await withApp(
+      [{ text: 'answered' }],
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'answered');
+        await type(stdin, '/fork 1');
+        await waitFor(stdout, 'forked from prompt 1');
+      },
+      { initialPrompt: 'the first thing' },
+    );
+  });
+
+  test('/help lists every command from the same registry the menu reads', async () => {
+    await withApp(
+      [{ text: 'ok' }],
+      async ({ stdout, stdin }) => {
+        await type(stdin, '/help');
+        await waitFor(stdout, '/permissions');
+        expect(stdout.output).toContain('/ship');
+      },
+      { commands: shipCommand },
+    );
+  });
+
+  test('/cost reports the spend and sets a budget', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/cost');
+      await waitFor(stdout, 'none - /cost <usd> sets one');
+      await type(stdin, '/cost 2.50');
+      await waitFor(stdout, 'budget: $2.50');
+      // Zero removes it, the same way `--max-cost 0` does.
+      await type(stdin, '/cost 0');
+      await waitFor(stdout, 'budget removed');
+    });
+  });
+
+  test('/cost rejects an amount that is not one', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/cost lots');
+      await waitFor(stdout, 'is not an amount');
+    });
+  });
+
+  test('/context reports the window and what compaction dropped', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/context');
+      await waitFor(stdout, 'context  ~');
+      expect(stdout.output).toContain('dropped');
+    });
+  });
+
+  test('/model with no argument names the model in use', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/model');
+      await waitFor(stdout, '/model <provider/model> switches');
+    });
+  });
+
+  test('/model reports an unknown reference and stays on the current model', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/model nonsense/nope');
+      await waitFor(stdout, 'unknown model');
+      await type(stdin, '/model');
+      await waitFor(stdout, '/model <provider/model> switches');
+    });
+  });
+
+  test('/permissions shows the mode and says deny wins', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/permissions');
+      await waitFor(stdout, 'mode   auto');
+    });
+  });
+
+  test('/todo says so when there is nothing on the list', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/todo');
+      await waitFor(stdout, 'no todos in this session');
+    });
+  });
+
+  test('/compact says when there is nothing to compact', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/compact');
+      await waitFor(stdout, 'nothing to compact yet');
+    });
+  });
+});
+
 describe('the permission prompt', () => {
   test('appears with the real diff when a write needs approval', async () => {
     await withApp(

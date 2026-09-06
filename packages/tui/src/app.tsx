@@ -26,6 +26,8 @@ import {
 } from '@earshot/core';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { type CommandName, commandRows, findCommand } from './commands.ts';
+import { CommandMenu, menuEntries } from './components/command-menu.tsx';
 import { Markdown } from './components/markdown.tsx';
 import { MemoryCapture } from './components/memory-capture.tsx';
 import { PermissionPrompt } from './components/permission.tsx';
@@ -67,9 +69,13 @@ function promptLabel(prompt: UserPrompt): string {
     .join('\n');
 }
 
-export function App({ session, model, initialPrompt }: AppProps) {
+export function App({ session, model: initialModel, initialPrompt }: AppProps) {
   const { exit } = useApp();
   const agent: Agent = session.agent;
+
+  // State rather than the prop alone: `/model` swaps it mid-session, and the
+  // status line and the system prompt both have to follow.
+  const [model, setModel] = useState(initialModel);
 
   const [items, setItems] = useState<ScrollItem[]>(() =>
     session.problems.map((problem) => ({
@@ -82,6 +88,8 @@ export function App({ session, model, initialPrompt }: AppProps) {
   const [live, setLive] = useState('');
   const [runningTool, setRunningTool] = useState<string | undefined>();
   const [input, setInput] = useState('');
+  /** Highlighted row of the `/` menu; reset whenever the line changes. */
+  const [menuIndex, setMenuIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<PermissionMode>(agent.permissionMode);
   const [cost, setCost] = useState(0);
@@ -559,6 +567,210 @@ export function App({ session, model, initialPrompt }: AppProps) {
     [agent, push, runTurn, session.store],
   );
 
+  /**
+   * `/model` - show what is in use, or switch.
+   *
+   * The switch goes through the agent, which resolves the reference against the
+   * same registry and credential order the CLI uses. A reference with no
+   * credentials leaves the session on the model it had: half a switch would
+   * price one model's tokens at another's rates.
+   */
+  const switchModel = useCallback(
+    async (ref?: string) => {
+      if (!ref) {
+        const current = agent.model;
+        const price = current.model.cost;
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: [
+            `  ${current.provider.id}/${current.model.id}`,
+            `  context  ${(current.model.contextWindow ?? 0).toLocaleString()} tokens`,
+            `  price    $${price?.input ?? '?'} in / $${price?.output ?? '?'} out per million`,
+            '',
+            '  /model <provider/model> switches; `earshot models` lists them',
+          ].join('\n'),
+        });
+        return;
+      }
+      try {
+        const resolved = await agent.changeModel(ref);
+        const next = `${resolved.provider.id}/${resolved.model.id}`;
+        setModel(next);
+        // The system prompt names the model; leaving the old name in it would
+        // tell the new model it is something else.
+        await refreshSystemPrompt(agent, next, session.skills);
+        push({ kind: 'notice', id: nextId(), text: `model: ${next}` });
+      } catch (error) {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `${(error as Error).message}`,
+          color: theme.warning,
+        });
+      }
+    },
+    [agent, push, session.skills],
+  );
+
+  /** `/compact` - the 80% compaction, asked for early. */
+  const compactNow = useCallback(async () => {
+    const abort = new AbortController();
+    controller.current = abort;
+    setBusy(true);
+    try {
+      let compactedAnything = false;
+      for await (const event of agent.compactNow(abort.signal)) {
+        if (event.type === 'compacted') {
+          compactedAnything = true;
+          setCompacted((count) => count + event.replaced);
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: `compacted: ${event.replaced} earlier messages are now a summary`,
+          });
+        }
+      }
+      if (!compactedAnything) {
+        push({ kind: 'notice', id: nextId(), text: 'nothing to compact yet' });
+      }
+    } catch (error) {
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `could not compact: ${(error as Error).message}`,
+        color: theme.warning,
+      });
+    } finally {
+      setBusy(false);
+      setContext(agent.contextUse);
+      controller.current = undefined;
+    }
+  }, [agent, push]);
+
+  /**
+   * One handler per registry entry, keyed by name.
+   *
+   * `Record<CommandName, ...>` is the whole point: a command added to
+   * `COMMANDS` with no handler here fails to compile, and a handler for a name
+   * the registry does not list fails to compile too. The menu and docs/cli.md
+   * read the same registry, so "listed but not dispatchable" and "dispatchable
+   * but unlisted" are both unreachable rather than merely unlikely.
+   */
+  const handlers: Record<CommandName, (argument?: string) => void> = {
+    exit: () => exit(),
+    help: () => push({ kind: 'notice', id: nextId(), text: describeCommands(session) }),
+    model: (argument) => void switchModel(argument),
+    compact: () => void compactNow(),
+    context: () => {
+      const { tokens, window } = agent.contextUse;
+      const percent = window > 0 ? Math.round((tokens / window) * 100) : 0;
+      const files = agent.touchedFiles;
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: [
+          `  model    ${model}`,
+          `  context  ~${tokens.toLocaleString()} of ${window.toLocaleString()} tokens (${percent}%)`,
+          `  dropped  ${compacted} earlier message${compacted === 1 ? '' : 's'} replaced by a summary`,
+          `  files    ${files.length === 0 ? 'none touched yet' : files.join(', ')}`,
+          '',
+          '  /compact summarises now rather than waiting for 80%',
+        ].join('\n'),
+      });
+    },
+    cost: (argument) => {
+      if (argument !== undefined && argument !== '') {
+        const amount = Number.parseFloat(argument.replace(/^\$/, ''));
+        if (Number.isNaN(amount)) {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: `usage: /cost [usd] - "${argument}" is not an amount`,
+            color: theme.warning,
+          });
+          return;
+        }
+        // Zero removes the ceiling, the same way `--max-cost 0` does, so the two
+        // ways of setting a budget cannot disagree about how to turn one off.
+        agent.setBudget(amount > 0 ? amount : undefined);
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: amount > 0 ? `budget: $${amount.toFixed(2)}` : 'budget removed',
+        });
+        return;
+      }
+      const budget = agent.budgetUsd;
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text:
+          `  spent    $${agent.costUsd.toFixed(4)}\n` +
+          `  budget   ${budget === undefined ? 'none - /cost <usd> sets one' : `$${budget.toFixed(2)}`}`,
+      });
+    },
+    todo: () => {
+      const todos = agent.todos.list();
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text:
+          todos.length === 0
+            ? 'no todos in this session'
+            : todos
+                .map(
+                  (todo) =>
+                    `  ${todo.status === 'done' ? 'x' : todo.status === 'in_progress' ? '>' : ' '} ${todo.text}`,
+                )
+                .join('\n'),
+      });
+    },
+    permissions: () => {
+      const rules = agent.permissionRules;
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: [
+          `  mode   ${agent.permissionMode}  (/mode changes it)`,
+          ...(rules.length === 0
+            ? ['  rules  none configured']
+            : [
+                '  rules  (deny always wins, whatever the mode or scope)',
+                ...rules.map(
+                  (rule) => `    ${rule.effect.padEnd(5)} ${rule.source}  [${rule.scope}]`,
+                ),
+              ]),
+        ].join('\n'),
+      });
+    },
+    init: () => void runTurn(INIT_PROMPT),
+
+    mode: (argument) => {
+      if (argument && isPermissionMode(argument)) {
+        agent.setPermissionMode(argument);
+        setMode(argument);
+        push({ kind: 'notice', id: nextId(), text: `permission mode: ${argument}` });
+      } else {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `usage: /mode <${PERMISSION_MODES.join('|')}>`,
+          color: theme.warning,
+        });
+      }
+    },
+    memory: (argument) => void showMemories(argument),
+    tree: (argument) => void sessionTree('tree', argument),
+    rewind: (argument) => void sessionTree('rewind', argument),
+    fork: (argument) => void sessionTree('fork', argument),
+    undo: () => void undoLast(),
+    plan: (argument) => void plan(argument),
+    skills: () => push({ kind: 'notice', id: nextId(), text: describeExtensions(session) }),
+  };
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
+
   const handleCommand = useCallback(
     (command: string) => {
       // Split once, keeping the remainder: `split(/\s+/, 2)` discards everything
@@ -569,31 +781,12 @@ export function App({ session, model, initialPrompt }: AppProps) {
       const name = space === -1 ? body : body.slice(0, space);
       const argument = space === -1 ? undefined : body.slice(space + 1).trim();
 
-      if (name === 'exit' || name === 'quit') {
-        exit();
-        return;
-      }
-      if (name === 'mode') {
-        if (argument && isPermissionMode(argument)) {
-          agent.setPermissionMode(argument);
-          setMode(argument);
-          push({ kind: 'notice', id: nextId(), text: `permission mode: ${argument}` });
-        } else {
-          push({
-            kind: 'notice',
-            id: nextId(),
-            text: `usage: /mode <${PERMISSION_MODES.join('|')}>`,
-            color: theme.warning,
-          });
-        }
-        return;
-      }
-      if (name === 'memory') {
-        void showMemories(argument);
-        return;
-      }
-      if (name === 'tree' || name === 'rewind' || name === 'fork') {
-        if (busy) {
+      const spec = findCommand(name);
+      if (spec) {
+        // Checked once, here, rather than inside each handler that needs it.
+        // Three copies of this branch is how `/plan` and `/tree` came to phrase
+        // the same refusal differently.
+        if (spec.idleOnly && busy) {
           push({
             kind: 'notice',
             id: nextId(),
@@ -602,32 +795,7 @@ export function App({ session, model, initialPrompt }: AppProps) {
           });
           return;
         }
-        void sessionTree(name, argument);
-        return;
-      }
-      if (name === 'undo') {
-        void undoLast();
-        return;
-      }
-      if (name === 'plan') {
-        if (busy) {
-          push({
-            kind: 'notice',
-            id: nextId(),
-            text: 'finish or interrupt the current turn first (esc)',
-            color: theme.warning,
-          });
-          return;
-        }
-        void plan(argument);
-        return;
-      }
-      if (name === 'skills') {
-        push({
-          kind: 'notice',
-          id: nextId(),
-          text: describeExtensions(session),
-        });
+        handlersRef.current[spec.name as CommandName](argument);
         return;
       }
 
@@ -663,11 +831,23 @@ export function App({ session, model, initialPrompt }: AppProps) {
         color: theme.warning,
       });
     },
-    [agent, busy, exit, plan, push, runTurn, session, sessionTree, showMemories, undoLast],
+    [agent, busy, push, runTurn, session],
   );
 
   const submit = useCallback(
     (text: string) => {
+      // Enter is resolved here rather than in the app's `useInput`, because both
+      // handlers see the same keystroke and Ink guarantees no order between
+      // them: deciding in two places is how a command would get completed and
+      // run at once, or run one row off from the one that was highlighted.
+      const entry = menuOpenRef.current ? menuEntriesRef.current[selectedRef.current] : undefined;
+      if (entry) {
+        setInput('');
+        setMenuIndex(0);
+        handleCommand(entry.insert);
+        return;
+      }
+
       const trimmed = text.trim();
       setInput('');
       if (trimmed === '') return;
@@ -695,8 +875,52 @@ export function App({ session, model, initialPrompt }: AppProps) {
   // Input is disabled while a prompt is open so the two do not both consume keys.
   const inputActive = !pending && !question;
 
+  // Open while the line is a bare command name being typed. A space means an
+  // argument is being written, and the user has already chosen.
+  const menuOpen = inputActive && input.startsWith('/') && !input.includes(' ');
+  const entries = menuOpen ? menuEntries(input.slice(1), session.commands, busy) : [];
+  const selected = Math.min(menuIndex, Math.max(0, entries.length - 1));
+
+  // Read by `submit`, which runs from TextInput's own key handler and would
+  // otherwise close over the previous render's list.
+  const menuOpenRef = useRef(menuOpen);
+  menuOpenRef.current = menuOpen;
+  const menuEntriesRef = useRef(entries);
+  menuEntriesRef.current = entries;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+
   useInput(
     (input_, key) => {
+      // The menu adds no `useInput` of its own: a second handler would race this
+      // one for the same keystroke. It is a pure render of state owned here, and
+      // this branch is the only place its keys are interpreted.
+      if (menuOpen && entries.length > 0) {
+        if (key.upArrow) {
+          setMenuIndex((current) => (current <= 0 ? entries.length - 1 : current - 1));
+          return;
+        }
+        if (key.downArrow) {
+          setMenuIndex((current) => (current >= entries.length - 1 ? 0 : current + 1));
+          return;
+        }
+        if (key.tab) {
+          // Completes without running: choosing a command and committing to it
+          // are two decisions, and one of them takes an argument.
+          const entry = entries[selected];
+          if (entry) setInput(`${entry.insert} `);
+          setMenuIndex(0);
+          return;
+        }
+        if (key.escape) {
+          // Closes the menu and nothing else. Escape already means "cancel the
+          // turn", and a menu that quietly took that over would make the one
+          // key people rely on mid-turn depend on what is on the line.
+          setInput('');
+          setMenuIndex(0);
+          return;
+        }
+      }
       if (key.escape) {
         setCandidate(undefined);
         if (busy) controller.current?.abort();
@@ -745,12 +969,17 @@ export function App({ session, model, initialPrompt }: AppProps) {
 
       {candidate && inputActive && <MemoryCapture candidate={candidate} />}
 
+      {menuOpen && <CommandMenu entries={entries} selected={selected} />}
+
       {inputActive && (
         <Box marginTop={1}>
           <Text color={theme.user}>{'> '}</Text>
           <TextInput
             value={input}
-            onChange={setInput}
+            onChange={(value) => {
+              setInput(value);
+              setMenuIndex(0);
+            }}
             onSubmit={submit}
             placeholder={busy ? 'steer the agent, or esc to interrupt' : 'what should I do?'}
           />
@@ -803,6 +1032,33 @@ function ScrollRow({ item }: { item: ScrollItem }) {
     </Box>
   );
 }
+
+/**
+ * What `/help` shows: the registry, plus whatever this directory contributes.
+ *
+ * Built from the same list the menu and docs/cli.md read, so `/help` cannot
+ * describe a command that does not exist or miss one that does.
+ */
+function describeCommands(session: CreatedSession): string {
+  const lines = commandRows().map((row) => `  ${row.command.padEnd(34)} ${row.summary}`);
+  if (session.commands.length > 0) {
+    lines.push('', '  commands from this directory:');
+    for (const command of session.commands) {
+      lines.push(`  ${`/${command.name}`.padEnd(34)} ${command.description}`);
+    }
+  }
+  lines.push('', '  type / at the prompt to filter this list and pick one');
+  return lines.join('\n');
+}
+
+/**
+ * `/init`. Phrased as a request, not a template: the file is meant to describe
+ * what this project actually does, and a model handed a skeleton fills the
+ * skeleton in rather than reading the repository.
+ */
+const INIT_PROMPT = `Write an AGENTS.md at the root of this project for a coding agent that has never seen it.
+
+Read enough of the repository first to be accurate. Cover: what the project is, how it is laid out, the commands to build, test and lint it, and the conventions and rules that are not obvious from the code. Prefer rules that prevent a specific failure, and say what the failure is. If an AGENTS.md or CLAUDE.md already exists, improve it in place rather than replacing it.`;
 
 /**
  * What `/skills` shows. Skills and commands are listed together because from the
