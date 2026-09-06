@@ -27,7 +27,7 @@ features:
 ## Start in one command
 
 ```bash
-npm install --global earshot
+npm install --global @raegent/earshot
 earshot doctor
 ```
 

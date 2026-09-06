@@ -126,7 +126,7 @@ environment isolation, tool listing, calls, diagnostics, and shutdown.
 
 ## M5 — Ship 🟨
 
-Docs site, `npm i -g earshot`, compiled binaries (macOS arm64/x64, Linux
+Docs site, `npm i -g @raegent/earshot`, compiled binaries (macOS arm64/x64, Linux
 x64/arm64, Windows x64), `/doctor`, Windows QA in Windows Terminal, changelog,
 contributor guide.
 
