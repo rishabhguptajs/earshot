@@ -191,9 +191,12 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
       : {}),
   });
 
+  // Scoped to this session: the store is shared by every session in the
+  // directory, and an unscoped `/undo` reached into batches the user never saw
+  // this session make. An ephemeral run has no id and so has no undo history.
   const shadow = options.noUndo
     ? undefined
-    : await ShadowGit.open(options.cwd).catch(() => undefined);
+    : await ShadowGit.open(options.cwd, store?.id).catch(() => undefined);
 
   // The skill tool only exists when there is something to load: a tool whose
   // every argument is invalid is one the model wastes a call discovering.
