@@ -1,2 +1,2 @@
 /** Kept in its own module so anything can read it without importing the barrel. */
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';

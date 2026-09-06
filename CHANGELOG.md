@@ -9,6 +9,27 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 Nothing queued yet.
 
+## [0.2.0] - 2026-09-06
+
+### Added
+
+- **First-run onboarding** — starting `earshot` with no credentials configured
+  now opens the TUI into an onboarding flow instead of exiting: pick a
+  provider, sign in with a browser or paste a key, and one minimal live call
+  verifies it before your first turn runs. A rejected key is removed rather
+  than left to fail again; an unreachable probe offers keeping the key anyway
+  rather than blocking you behind a flaky network. `--no-onboarding` restores
+  the previous behavior for scripts and CI. Headless (`-p`) and `earshot acp`
+  are unaffected — a missing credential there still exits `3` immediately.
+- **A `/` command menu** in the TUI, filtering as you type, with `tab` to
+  complete and `enter` to run. Every built-in command now comes from a single
+  registry (`packages/tui/src/commands.ts`) that dispatch, the menu, and
+  `docs/cli.md` all read from, so a command cannot be documented without being
+  runnable or runnable without being documented.
+- New in-session commands: `/help`, `/model` (show or switch the model
+  mid-session), `/compact` (run compaction early), `/context`, `/cost`,
+  `/todo`, `/permissions`, `/init` (write an `AGENTS.md` for the project).
+
 ## [0.1.0] - 2026-09-06
 
 The first release. Pre-1.0 deliberately: the v1 compatibility guarantees are M7
