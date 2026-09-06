@@ -132,6 +132,29 @@ describe('the ACP server', () => {
     ]);
   });
 
+  // A promise in docs/compatibility.md with nothing enforcing it until now: a
+  // client that sends MCP definitions is told they were not taken, rather than
+  // being left to believe its servers loaded. Silently ignoring them would look
+  // identical to supporting them right up until a tool call failed.
+  test('rejects client-provided MCP servers rather than ignoring them', async () => {
+    const { app, requests } = harness();
+    await testClient().connectWith(app, async (client) => {
+      const failure = await client
+        .request(acp.methods.agent.session.new, {
+          cwd: '/workspace/project',
+          mcpServers: [{ name: 'theirs', command: 'node', args: [], env: [] }],
+        })
+        .then(
+          () => undefined,
+          (error: Error) => error,
+        );
+
+      expect(failure?.message).toContain('client-provided MCP servers are not supported');
+    });
+    // And no session was created for the rejected request.
+    expect(requests).toEqual([]);
+  });
+
   test('streams text, reasoning, tool calls, results and usage as session updates', async () => {
     const updates: acp.SessionUpdate[] = [];
     const { app } = harness([
