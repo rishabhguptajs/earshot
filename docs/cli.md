@@ -20,6 +20,7 @@ earshot doctor                    diagnose the local setup
 | `--version`, `-v` | Print the version and exit |
 | `--help`, `-h` | Print help and exit |
 | `--model <ref>` | Model for this run, as `provider/model` or a bare model id |
+| `--no-onboarding` | Skip first-run onboarding; missing credentials exit 3 like before |
 
 ## `earshot -p`
 
