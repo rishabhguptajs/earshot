@@ -16,6 +16,10 @@ work and are not met, so a 1.0.0 would promise stability this release does not
 have. Headless output and ACP already carry their own version markers and their
 own promises - see [Compatibility](docs/compatibility.md).
 
+Published as `@raegent/earshot`. npm refuses the unscoped name for being too
+close to an existing `teashot`; the command is still `earshot`, and only the
+install string carries the scope.
+
 ### Added
 
 - **Ship pipeline** — a VitePress documentation site, verified `npm install -g`

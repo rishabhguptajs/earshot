@@ -16,7 +16,7 @@
 ### From npm
 
 ```bash
-npm install --global earshot
+npm install --global @raegent/earshot
 earshot doctor
 ```
 
