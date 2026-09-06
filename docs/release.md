@@ -13,8 +13,10 @@ install, and native smoke tests for every standalone executable.
 4. Commit, create a signed `vX.Y.Z` tag, and push it.
 5. Approve the protected `npm` environment after the artifact jobs pass.
 
-The tag workflow publishes the Node package with npm provenance and creates a
-GitHub release containing these native assets:
+The tag workflow publishes the Node package and creates a GitHub release
+containing these native assets. Provenance is not attached: npm can only verify
+a provenance bundle when the source repository is public, and this one is
+private.
 
 ```text
 earshot-darwin-arm64
