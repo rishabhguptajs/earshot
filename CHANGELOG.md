@@ -9,6 +9,17 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 Nothing queued yet.
 
+## [0.3.2] - 2026-09-06
+
+### Fixed
+
+- **First-run onboarding now uses the provider and model the user selects.**
+  Choosing a provider opens a searchable list of its model IDs, reuses an
+  existing credential when present, verifies that exact model with the live
+  probe, and carries the selected `provider/model` into the new session.
+  Previously a successful OpenRouter sign-in still retried the hard-coded
+  Anthropic default and immediately failed for lack of Anthropic credentials.
+
 ## [0.3.1] - 2026-09-06
 
 ### Fixed
