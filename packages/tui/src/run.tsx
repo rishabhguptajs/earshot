@@ -2,6 +2,7 @@ import { platform } from 'node:os';
 import type { CreatedSession, UserPrompt } from '@earshot/core';
 import { render } from 'ink';
 import { App } from './app.tsx';
+import { Onboarding, type OnboardingOptions, type OnboardingResult } from './onboarding.tsx';
 
 export interface RunTuiOptions {
   session: CreatedSession;
@@ -53,4 +54,34 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
     await options.session.dispose();
   }
   return 0;
+}
+
+/**
+ * Runs first-run onboarding and resolves with what it decided.
+ *
+ * Rendered with the same options as the app - Ctrl-C is the component's, not
+ * Ink's, so quitting is one code path rather than two. The caller has already
+ * established there is a TTY; onboarding must never be reached from a headless
+ * or ACP run, where there is nobody to answer it.
+ */
+export async function runOnboarding(options: OnboardingOptions): Promise<OnboardingResult> {
+  const isWindows = platform() === 'win32';
+  let result: OnboardingResult = { outcome: 'quit' };
+
+  const instance = render(
+    <Onboarding
+      {...options}
+      onDone={(decided) => {
+        result = decided;
+      }}
+    />,
+    {
+      exitOnCtrlC: false,
+      patchConsole: true,
+      ...(isWindows ? { maxFps: WINDOWS_MAX_FPS } : {}),
+    },
+  );
+
+  await instance.waitUntilExit();
+  return result;
 }

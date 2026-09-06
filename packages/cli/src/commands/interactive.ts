@@ -6,11 +6,12 @@ import {
   type PermissionMode,
   UnknownModelError,
 } from '@earshot/core';
-import { runTui } from '@earshot/tui';
+import { runOnboarding, runTui } from '@earshot/tui';
 import type { ParsedArgs } from '../args.ts';
 import { parseCuriosity, parseMaxCost } from '../budget.ts';
 import { startExtensions } from '../extensions/index.ts';
 import { loadImage } from '../image.ts';
+import { buildOnboardingOptions } from '../onboard.ts';
 
 const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
@@ -67,49 +68,75 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
   }
 
   const extensions = await startExtensions(process.cwd());
+  const model = typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL;
+  // `--no-onboarding` is for CI and for anyone who wants the old dead-end back.
+  const onboardingAllowed = flags['no-onboarding'] !== true;
 
-  try {
-    const session = await createSession({
-      cwd: process.cwd(),
-      extraTools: extensions.tools,
-      problems: extensions.problems,
-      onDispose: () => extensions.close(),
-      model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
-      ...(mode ? { mode } : {}),
-      ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
-      ...(curiosity ? { curiosity } : {}),
-      ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
-      ...resumeFrom(flags),
-    });
+  let firstPrompt = initialPrompt;
+  let attempted = false;
 
-    return await runTui({
-      session,
-      model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
-      ...(initialPrompt !== '' || image
-        ? {
-            initialPrompt: image
-              ? [...(initialPrompt ? [{ type: 'text' as const, text: initialPrompt }] : []), image]
-              : initialPrompt,
-          }
-        : {}),
-    });
-  } catch (error) {
-    // The session never reached dispose(), so anything already spawned is ours
-    // to clean up here or it outlives the process that started it.
-    await extensions.close();
-    if (error instanceof UnknownModelError) {
-      process.stderr.write(`${error.message}\n\nrun \`earshot models\` to see what is available\n`);
-      return 2;
+  for (;;) {
+    try {
+      const session = await createSession({
+        cwd: process.cwd(),
+        extraTools: extensions.tools,
+        problems: extensions.problems,
+        onDispose: () => extensions.close(),
+        model,
+        ...(mode ? { mode } : {}),
+        ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
+        ...(curiosity ? { curiosity } : {}),
+        ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+        ...resumeFrom(flags),
+      });
+
+      return await runTui({
+        session,
+        model,
+        ...(firstPrompt !== '' || image
+          ? {
+              initialPrompt: image
+                ? [...(firstPrompt ? [{ type: 'text' as const, text: firstPrompt }] : []), image]
+                : firstPrompt,
+            }
+          : {}),
+      });
+    } catch (error) {
+      if (error instanceof MissingCredentialsError && onboardingAllowed && !attempted) {
+        // Only ever offered once: a second `MissingCredentialsError` after
+        // onboarding said it stored working credentials means something else is
+        // wrong, and looping back into the same screens would hide that.
+        attempted = true;
+        const result = await runOnboarding(await buildOnboardingOptions(error.provider.id));
+        if (result.outcome === 'quit') {
+          process.stdout.write(
+            'nothing was stored. run `earshot auth login <provider>` when you are ready.\n',
+          );
+          await extensions.close();
+          return 0;
+        }
+        firstPrompt = result.firstPrompt ?? firstPrompt;
+        continue;
+      }
+      // The session never reached dispose(), so anything already spawned is
+      // ours to clean up here or it outlives the process that started it.
+      await extensions.close();
+      if (error instanceof UnknownModelError) {
+        process.stderr.write(
+          `${error.message}\n\nrun \`earshot models\` to see what is available\n`,
+        );
+        return 2;
+      }
+      if (error instanceof MissingCredentialsError) {
+        process.stderr.write(`${error.message}\n`);
+        return 3;
+      }
+      if (error instanceof NoSessionToResumeError) {
+        process.stderr.write(`${error.message}\n`);
+        return 2;
+      }
+      throw error;
     }
-    if (error instanceof MissingCredentialsError) {
-      process.stderr.write(`${error.message}\n`);
-      return 3;
-    }
-    if (error instanceof NoSessionToResumeError) {
-      process.stderr.write(`${error.message}\n`);
-      return 2;
-    }
-    throw error;
   }
 }
 
