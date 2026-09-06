@@ -47,7 +47,7 @@ goes stale. See [Adding a provider](docs/adding-a-provider.md).
 
 ### 2. A real terminal UX, on Windows too
 
-Claude-Code-style inline scrollback, installable with `npm i -g earshot`, with
+Claude-Code-style inline scrollback, installable with `npm i -g @raegent/earshot`, with
 native Windows CI and a hands-on Windows Terminal release checklist. Most
 terminal agents are either macOS-first or need a bespoke runtime.
 
@@ -73,7 +73,7 @@ See [Listening](docs/listening.md) for how each of these is specified and tested
 > Requires **Node ≥ 22** for the npm package. Standalone releases embed their runtime.
 
 ```bash
-npm install --global earshot
+npm install --global @raegent/earshot
 earshot doctor
 ```
 

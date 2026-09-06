@@ -27,7 +27,7 @@ if (!version || !source.includes(`VERSION = '${version}'`)) {
   throw new Error(`packages/core/src/version.ts does not match package version ${version}`);
 }
 
-const cli = packages.find(({ value }) => value.name === 'earshot')?.value;
+const cli = packages.find(({ value }) => value.name === '@raegent/earshot')?.value;
 if (!cli || cli.private === true) throw new Error('the earshot package is not publishable');
 for (const [name, range] of Object.entries(cli.dependencies ?? {})) {
   if (range.startsWith('workspace:')) throw new Error(`runtime dependency ${name} uses ${range}`);
