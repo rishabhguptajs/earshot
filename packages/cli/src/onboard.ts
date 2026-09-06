@@ -16,7 +16,10 @@ import type { OnboardingOptions, OnboardingProvider, ProbeResult } from '@earsho
  * it can be driven in tests with no registry and no network, and this is the
  * one place that binds it to the real one.
  */
-export async function buildOnboardingOptions(wanted?: string): Promise<OnboardingOptions> {
+export async function buildOnboardingOptions(
+  wanted?: string,
+  wantedModel?: string,
+): Promise<OnboardingOptions> {
   const registry = buildRegistry();
   const store = new AuthStore();
 
@@ -32,38 +35,22 @@ export async function buildOnboardingOptions(wanted?: string): Promise<Onboardin
   return {
     providers,
     ...(wanted ? { wanted } : {}),
+    ...(wantedModel ? { wantedModel } : {}),
     storeKey: (providerId, key) => store.set(providerId, { type: 'api-key', apiKey: key }),
     forgetKey: (providerId) => store.remove(providerId),
     signIn: async (providerId, onUrl) => {
       const credentials = await loginToOpenRouter({ onUrl });
       await store.set(providerId, credentials);
     },
-    probe: (providerId) => probe(registry, providerId),
+    probe: (providerId, modelId) => probe(registry, providerId, modelId),
   };
-}
-
-/** Pick the closest equivalent model when onboarding changes the provider. */
-export function modelForOnboardingProvider(providerId: string, requestedRef: string): string {
-  const provider = buildRegistry().get(providerId);
-  if (!provider) throw new Error(`unknown provider "${providerId}"`);
-
-  const requestedId = requestedRef.includes('/')
-    ? requestedRef.slice(requestedRef.indexOf('/') + 1)
-    : requestedRef;
-  const models = provider.models();
-  const model =
-    models.find((candidate) => candidate.id === requestedRef) ??
-    models.find((candidate) => candidate.id === requestedId) ??
-    models[0];
-  if (!model) throw new Error(`${providerId} publishes no models`);
-
-  return `${providerId}/${model.id}`;
 }
 
 async function describe(provider: Provider, store: AuthStore): Promise<OnboardingProvider> {
   const configured = await resolveCredentials(provider, { store }).catch(() => undefined);
   return {
     id: provider.id,
+    models: provider.models().map((model) => ({ id: model.id, name: model.name })),
     kind: provider.auth.kind === 'oauth' ? 'oauth' : 'api-key',
     ...(envVarsOf(provider.auth).length ? { envVars: envVarsOf(provider.auth) } : {}),
     ...(configured ? { configured: describeConfigured(configured.type) } : {}),
@@ -90,16 +77,17 @@ function describeConfigured(kind: 'ambient' | 'oauth' | 'api-key'): string {
 async function probe(
   registry: ReturnType<typeof buildRegistry>,
   providerId: string,
+  modelId: string,
 ): Promise<ProbeResult> {
   const listed = registry.list().find((provider) => provider.id === providerId);
   if (!listed) return { ok: false, reason: 'other', message: `unknown provider "${providerId}"` };
 
-  const model = listed.models()[0];
+  const model = listed.models().find((candidate) => candidate.id === modelId);
   if (!model) {
     return {
       ok: false,
       reason: 'other',
-      message: `${providerId} publishes no models to check against`,
+      message: `${providerId} does not publish model "${modelId}"`,
     };
   }
 

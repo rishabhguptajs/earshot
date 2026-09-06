@@ -82,9 +82,9 @@ cd packages/cli && npm link
 ## Authenticate
 
 Skip this section on a first run in a real terminal: starting `earshot` with no
-credentials configured opens the TUI into onboarding — pick a provider, sign in
-or paste a key, and it is checked with one live call before you land in your
-first turn. Nothing is printed or logged: the key goes straight into the same
+credentials configured opens the TUI into onboarding — pick a provider, search
+and select one of its model IDs, then sign in or paste a key. That exact model is
+checked with one live call before you land in your first turn. Nothing is printed or logged: the key goes straight into the same
 `auth.json` `earshot auth login` writes to, `0600` and atomic. `--no-onboarding`
 restores the old dead end for scripts and CI, and `earshot -p` and `earshot acp`
 never onboard — a script has nobody to answer a prompt, so a missing credential

@@ -26,12 +26,18 @@ import { theme } from './theme.ts';
 
 export interface OnboardingProvider {
   readonly id: string;
+  readonly models: readonly OnboardingModel[];
   /** How credentials are given: a browser sign-in, or a key. */
   readonly kind: 'oauth' | 'api-key';
   /** Environment variable(s) that would also work, for the hint line. */
   readonly envVars?: readonly string[];
   /** Already configured elsewhere - an env var, or ambient credentials. */
   readonly configured?: string;
+}
+
+export interface OnboardingModel {
+  readonly id: string;
+  readonly name: string;
 }
 
 /** Why a probe failed, which is the only thing that decides the next screen. */
@@ -45,6 +51,8 @@ export interface OnboardingOptions {
   providers: readonly OnboardingProvider[];
   /** The provider the requested model needs, listed first when it is known. */
   wanted?: string;
+  /** The requested model, selected by default when the chosen provider offers it. */
+  wantedModel?: string;
   /** Stores an api key. The caller's `AuthStore`, never a second one. */
   storeKey(providerId: string, key: string): Promise<void>;
   /** Removes what was stored, so a rejected key is not left to fail again. */
@@ -52,24 +60,31 @@ export interface OnboardingOptions {
   /** The existing PKCE flow. `onUrl` is shown as well as opened: over SSH there is no browser. */
   signIn(providerId: string, onUrl: (url: string) => void): Promise<void>;
   /** One minimal live call. The only thing that proves a credential works. */
-  probe(providerId: string): Promise<ProbeResult>;
+  probe(providerId: string, modelId: string): Promise<ProbeResult>;
 }
 
 export interface OnboardingResult {
   /** `ready` means credentials are stored and verified. */
   outcome: 'ready' | 'quit';
   providerId?: string;
+  model?: string;
   /** What the user typed on the last screen, run as the first turn. */
   firstPrompt?: string;
 }
 
 type Screen =
   | { name: 'choose' }
-  | { name: 'key'; provider: OnboardingProvider }
-  | { name: 'oauth'; provider: OnboardingProvider; url?: string }
-  | { name: 'probing'; provider: OnboardingProvider }
-  | { name: 'failed'; provider: OnboardingProvider; result: Extract<ProbeResult, { ok: false }> }
-  | { name: 'ready'; provider: OnboardingProvider };
+  | { name: 'model'; provider: OnboardingProvider }
+  | { name: 'key'; provider: OnboardingProvider; model: OnboardingModel }
+  | { name: 'oauth'; provider: OnboardingProvider; model: OnboardingModel; url?: string }
+  | { name: 'probing'; provider: OnboardingProvider; model: OnboardingModel }
+  | {
+      name: 'failed';
+      provider: OnboardingProvider;
+      model: OnboardingModel;
+      result: Extract<ProbeResult, { ok: false }>;
+    }
+  | { name: 'ready'; provider: OnboardingProvider; model: OnboardingModel };
 
 export interface OnboardingProps extends OnboardingOptions {
   onDone: (result: OnboardingResult) => void;
@@ -107,61 +122,74 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
     [exit, onDone],
   );
 
-  const verify = useCallback(async (provider: OnboardingProvider) => {
-    setScreen({ name: 'probing', provider });
-    const result = await options.current.probe(provider.id);
+  const verify = useCallback(async (provider: OnboardingProvider, model: OnboardingModel) => {
+    setScreen({ name: 'probing', provider, model });
+    const result = await options.current.probe(provider.id, model.id);
     if (result.ok) {
-      setScreen({ name: 'ready', provider });
+      setScreen({ name: 'ready', provider, model });
       return;
     }
     // A key the provider refused is worse than no key: it fails again on every
     // future launch, from a file the user has no reason to look in.
     if (result.reason === 'rejected') await options.current.forgetKey(provider.id).catch(() => {});
-    setScreen({ name: 'failed', provider, result });
+    setScreen({ name: 'failed', provider, model, result });
   }, []);
 
   const submitKey = useCallback(async () => {
-    const provider = screen.name === 'key' ? screen.provider : undefined;
+    const selected = screen.name === 'key' ? screen : undefined;
     const key = secret.current;
     secret.current = '';
     setInput('');
-    if (!provider) return;
+    if (!selected) return;
     if (key.trim() === '') {
       setError('a key is needed, or press esc to go back');
       return;
     }
     setError(undefined);
-    await options.current.storeKey(provider.id, key.trim());
-    await verify(provider);
+    await options.current.storeKey(selected.provider.id, key.trim());
+    await verify(selected.provider, selected.model);
   }, [screen, verify]);
 
   const startSignIn = useCallback(
-    async (provider: OnboardingProvider) => {
-      setScreen({ name: 'oauth', provider });
+    async (provider: OnboardingProvider, model: OnboardingModel) => {
+      setScreen({ name: 'oauth', provider, model });
       try {
         await options.current.signIn(provider.id, (url) =>
-          setScreen({ name: 'oauth', provider, url }),
+          setScreen({ name: 'oauth', provider, model, url }),
         );
       } catch (failure) {
         setScreen({
           name: 'failed',
           provider,
+          model,
           result: { ok: false, reason: 'other', message: (failure as Error).message },
         });
         return;
       }
-      await verify(provider);
+      await verify(provider, model);
     },
     [verify],
   );
 
-  const choose = useCallback(
-    (provider: OnboardingProvider) => {
+  const chooseModel = useCallback(
+    (provider: OnboardingProvider, model: OnboardingModel) => {
+      setInput('');
       setError(undefined);
-      if (provider.kind === 'oauth') void startSignIn(provider);
-      else setScreen({ name: 'key', provider });
+      if (provider.configured) void verify(provider, model);
+      else if (provider.kind === 'oauth') void startSignIn(provider, model);
+      else setScreen({ name: 'key', provider, model });
     },
-    [startSignIn],
+    [startSignIn, verify],
+  );
+
+  const chooseProvider = useCallback(
+    (provider: OnboardingProvider) => {
+      setInput('');
+      setError(undefined);
+      setCursor(preferredModelIndex(provider.models, rest.wantedModel));
+      setScreen({ name: 'model', provider });
+    },
+    [rest.wantedModel],
   );
 
   useInput((key, meta) => {
@@ -178,8 +206,21 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
       if (meta.downArrow) setCursor((c) => (c >= providers.length - 1 ? 0 : c + 1));
       if (meta.return) {
         const provider = providers[cursor];
-        if (provider) choose(provider);
+        if (provider) chooseProvider(provider);
       }
+      return;
+    }
+    if (screen.name === 'model') {
+      if (meta.escape) {
+        setInput('');
+        setError(undefined);
+        setCursor(0);
+        setScreen({ name: 'choose' });
+        return;
+      }
+      const matches = matchingModels(screen.provider.models, input);
+      if (meta.upArrow) setCursor((c) => (c <= 0 ? Math.max(0, matches.length - 1) : c - 1));
+      if (meta.downArrow) setCursor((c) => (c >= matches.length - 1 ? 0 : c + 1));
       return;
     }
     if (screen.name === 'key' && !meta.escape) {
@@ -205,13 +246,17 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
       secret.current = '';
       setInput('');
       setError(undefined);
-      setScreen({ name: 'choose' });
+      setScreen(
+        screen.name === 'key' || screen.name === 'oauth' || screen.name === 'failed'
+          ? { name: 'model', provider: screen.provider }
+          : { name: 'choose' },
+      );
       return;
     }
     if (screen.name === 'failed' && key === 'k' && screen.result.reason === 'unreachable') {
       // Keeping an unverified key is allowed on purpose: a network that cannot
       // be reached must not be able to lock someone out of their own setup.
-      setScreen({ name: 'ready', provider: screen.provider });
+      setScreen({ name: 'ready', provider: screen.provider, model: screen.model });
     }
   });
 
@@ -233,6 +278,49 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
         ))}
         <Box marginTop={1}>
           <Text color={theme.muted}>↑↓ choose · enter select · q quit</Text>
+        </Box>
+        {error ? <Text color={theme.warning}>{error}</Text> : null}
+      </Box>
+    );
+  }
+
+  if (screen.name === 'model') {
+    const matches = matchingModels(screen.provider.models, input);
+    const selected = matches[cursor];
+    const start = Math.max(0, Math.min(cursor - 3, matches.length - 8));
+    return (
+      <Box flexDirection="column">
+        <Header />
+        <Text>
+          choose a model from {screen.provider.id} ({matches.length} matching)
+        </Text>
+        <Box>
+          <Text color={theme.user}>{'> '}</Text>
+          <TextInput
+            value={input}
+            onChange={(value) => {
+              setInput(value);
+              setCursor(0);
+              setError(undefined);
+            }}
+            onSubmit={() => {
+              if (selected) chooseModel(screen.provider, selected);
+              else setError('no model matches that search');
+            }}
+            placeholder="type to filter models"
+          />
+        </Box>
+        <Box flexDirection="column" marginTop={1}>
+          {matches.slice(start, start + 8).map((model) => (
+            <Text key={model.id} color={model === selected ? theme.user : theme.muted}>
+              {model === selected ? '› ' : '  '}
+              {model.id} · {model.name}
+            </Text>
+          ))}
+          {matches.length === 0 ? <Text color={theme.muted}>no matching models</Text> : null}
+        </Box>
+        <Box marginTop={1}>
+          <Text color={theme.muted}>type filter · ↑↓ choose · enter select · esc back</Text>
         </Box>
         {error ? <Text color={theme.warning}>{error}</Text> : null}
       </Box>
@@ -318,7 +406,9 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
 
   return (
     <Box flexDirection="column">
-      <Text color={theme.user}>ready: {screen.provider.id}</Text>
+      <Text color={theme.user}>
+        ready: {screen.provider.id}/{screen.model.id}
+      </Text>
       <Box marginTop={1}>
         <Text color={theme.muted}>what should I do? (enter to start with nothing)</Text>
       </Box>
@@ -328,7 +418,12 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
           value={input}
           onChange={setInput}
           onSubmit={(text) =>
-            finish({ outcome: 'ready', providerId: screen.provider.id, firstPrompt: text.trim() })
+            finish({
+              outcome: 'ready',
+              providerId: screen.provider.id,
+              model: `${screen.provider.id}/${screen.model.id}`,
+              firstPrompt: text.trim(),
+            })
           }
         />
       </Box>
@@ -348,6 +443,24 @@ function hint(provider: OnboardingProvider): string {
   if (provider.configured) return provider.configured;
   if (provider.kind === 'oauth') return 'sign in with a browser - no key to paste';
   return provider.envVars?.length ? provider.envVars.join(' or ') : 'api key';
+}
+
+function matchingModels(
+  models: readonly OnboardingModel[],
+  query: string,
+): readonly OnboardingModel[] {
+  const wanted = query.trim().toLowerCase();
+  if (!wanted) return models;
+  return models.filter(
+    (model) => model.id.toLowerCase().includes(wanted) || model.name.toLowerCase().includes(wanted),
+  );
+}
+
+function preferredModelIndex(models: readonly OnboardingModel[], wanted?: string): number {
+  if (!wanted) return 0;
+  const modelId = wanted.includes('/') ? wanted.slice(wanted.indexOf('/') + 1) : wanted;
+  const index = models.findIndex((model) => model.id === wanted || model.id === modelId);
+  return Math.max(0, index);
 }
 
 /** The provider the requested model needs goes first; it is why we are here. */

@@ -11,7 +11,7 @@ import type { ParsedArgs } from '../args.ts';
 import { parseCuriosity, parseMaxCost } from '../budget.ts';
 import { startExtensions } from '../extensions/index.ts';
 import { loadImage } from '../image.ts';
-import { buildOnboardingOptions, modelForOnboardingProvider } from '../onboard.ts';
+import { buildOnboardingOptions } from '../onboard.ts';
 
 const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
@@ -107,7 +107,7 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
         // onboarding said it stored working credentials means something else is
         // wrong, and looping back into the same screens would hide that.
         attempted = true;
-        const result = await runOnboarding(await buildOnboardingOptions(error.provider.id));
+        const result = await runOnboarding(await buildOnboardingOptions(error.provider.id, model));
         if (result.outcome === 'quit') {
           process.stdout.write(
             'nothing was stored. run `earshot auth login <provider>` when you are ready.\n',
@@ -115,9 +115,7 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
           await extensions.close();
           return 0;
         }
-        if (result.providerId && result.providerId !== error.provider.id) {
-          model = modelForOnboardingProvider(result.providerId, model);
-        }
+        if (result.model) model = result.model;
         firstPrompt = result.firstPrompt ?? firstPrompt;
         continue;
       }

@@ -68,6 +68,12 @@ async function type(stdin: FakeStdin, text: string): Promise<void> {
   await settle(30);
 }
 
+async function selectFirstModel(stdout: FakeStdout, stdin: FakeStdin): Promise<void> {
+  await waitFor(stdout, 'choose a model from');
+  stdin.send('\r');
+  await settle(30);
+}
+
 interface Fixture extends Partial<OnboardingOptions> {
   providers?: OnboardingProvider[];
 }
@@ -83,8 +89,17 @@ function withApp(
 
   const options: OnboardingOptions = {
     providers: fixture.providers ?? [
-      { id: 'anthropic', kind: 'api-key', envVars: ['ANTHROPIC_API_KEY'] },
-      { id: 'openrouter', kind: 'oauth' },
+      {
+        id: 'anthropic',
+        models: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }],
+        kind: 'api-key',
+        envVars: ['ANTHROPIC_API_KEY'],
+      },
+      {
+        id: 'openrouter',
+        models: [{ id: 'anthropic/claude-opus-5', name: 'Claude Opus 5' }],
+        kind: 'oauth',
+      },
     ],
     storeKey:
       fixture.storeKey ?? (async (providerId, key) => void stored.push({ providerId, key })),
@@ -92,6 +107,7 @@ function withApp(
     signIn: fixture.signIn ?? (async () => {}),
     probe: fixture.probe ?? (async () => ({ ok: true }) as ProbeResult),
     ...(fixture.wanted ? { wanted: fixture.wanted } : {}),
+    ...(fixture.wantedModel ? { wantedModel: fixture.wantedModel } : {}),
   };
 
   return (async () => {
@@ -127,7 +143,14 @@ describe('onboarding: provider choice', () => {
   test('shows a provider already configured elsewhere as such', async () => {
     await withApp(
       {
-        providers: [{ id: 'anthropic', kind: 'api-key', configured: 'ambient credentials' }],
+        providers: [
+          {
+            id: 'anthropic',
+            models: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }],
+            kind: 'api-key',
+            configured: 'ambient credentials',
+          },
+        ],
       },
       async ({ stdout }) => {
         await waitFor(stdout, 'ambient credentials');
@@ -139,8 +162,8 @@ describe('onboarding: provider choice', () => {
     await withApp(
       {
         providers: [
-          { id: 'anthropic', kind: 'api-key' },
-          { id: 'groq', kind: 'api-key' },
+          { id: 'anthropic', models: [], kind: 'api-key' },
+          { id: 'groq', models: [], kind: 'api-key' },
         ],
         wanted: 'groq',
       },
@@ -178,6 +201,7 @@ describe('onboarding: pasting a key', () => {
     const { stored } = await withApp({}, async ({ stdout, stdin }) => {
       await waitFor(stdout, 'anthropic');
       stdin.send('\r'); // select anthropic (first row)
+      await selectFirstModel(stdout, stdin);
       await waitFor(stdout, 'paste an api key');
       stdin.send('sk-super-secret-value');
       await settle(60);
@@ -198,6 +222,7 @@ describe('onboarding: pasting a key', () => {
     const { stored } = await withApp({}, async ({ stdout, stdin }) => {
       await waitFor(stdout, 'anthropic');
       stdin.send('\r');
+      await selectFirstModel(stdout, stdin);
       await waitFor(stdout, 'paste an api key');
       stdin.send('\r');
       await waitFor(stdout, 'a key is needed');
@@ -205,18 +230,62 @@ describe('onboarding: pasting a key', () => {
     expect(stored).toHaveLength(0);
   });
 
-  test('esc from the key screen goes back to provider choice without storing', async () => {
+  test('esc from the key screen goes back to model choice without storing', async () => {
     const { stored } = await withApp({}, async ({ stdout, stdin }) => {
       await waitFor(stdout, 'anthropic');
       stdin.send('\r');
+      await selectFirstModel(stdout, stdin);
       await waitFor(stdout, 'paste an api key');
       stdin.send('half-typed');
       await settle(30);
       stdin.send('\x1b');
-      await waitFor(stdout, 'earshot needs a model provider');
+      await waitFor(stdout, 'choose a model from anthropic');
       expect(stdout.output).not.toContain('half-typed');
     });
     expect(stored).toHaveLength(0);
+  });
+});
+
+describe('onboarding: model choice', () => {
+  test('filters models and probes the selected model', async () => {
+    const probed: Array<{ providerId: string; modelId: string }> = [];
+    const { results } = await withApp(
+      {
+        providers: [
+          {
+            id: 'anthropic',
+            models: [
+              { id: 'claude-sonnet-5', name: 'Claude Sonnet 5' },
+              { id: 'claude-opus-5', name: 'Claude Opus 5' },
+            ],
+            kind: 'api-key',
+            configured: 'api key set',
+          },
+        ],
+        probe: async (providerId, modelId) => {
+          probed.push({ providerId, modelId });
+          return { ok: true };
+        },
+      },
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'anthropic');
+        stdin.send('\r');
+        await waitFor(stdout, 'choose a model from anthropic');
+        await type(stdin, 'opus');
+        await waitFor(stdout, 'ready: anthropic/claude-opus-5');
+        stdin.send('\r');
+        await settle(60);
+      },
+    );
+    expect(probed).toEqual([{ providerId: 'anthropic', modelId: 'claude-opus-5' }]);
+    expect(results).toEqual([
+      {
+        outcome: 'ready',
+        providerId: 'anthropic',
+        model: 'anthropic/claude-opus-5',
+        firstPrompt: '',
+      },
+    ]);
   });
 });
 
@@ -229,6 +298,7 @@ describe('onboarding: validation', () => {
       async ({ stdout, stdin }) => {
         await waitFor(stdout, 'anthropic');
         stdin.send('\r');
+        await selectFirstModel(stdout, stdin);
         await waitFor(stdout, 'paste an api key');
         await type(stdin, 'sk-bad');
         await waitFor(stdout, 'rejected that credential');
@@ -245,6 +315,7 @@ describe('onboarding: validation', () => {
       async ({ stdout, stdin }) => {
         await waitFor(stdout, 'anthropic');
         stdin.send('\r');
+        await selectFirstModel(stdout, stdin);
         await waitFor(stdout, 'paste an api key');
         await type(stdin, 'sk-bad');
         await waitFor(stdout, 'rejected that credential');
@@ -262,6 +333,7 @@ describe('onboarding: validation', () => {
       async ({ stdout, stdin }) => {
         await waitFor(stdout, 'anthropic');
         stdin.send('\r');
+        await selectFirstModel(stdout, stdin);
         await waitFor(stdout, 'paste an api key');
         await type(stdin, 'sk-maybe-fine');
         await waitFor(stdout, 'could not reach');
@@ -281,6 +353,7 @@ describe('onboarding: validation', () => {
     const { results } = await withApp({}, async ({ stdout, stdin }) => {
       await waitFor(stdout, 'anthropic');
       stdin.send('\r');
+      await selectFirstModel(stdout, stdin);
       await waitFor(stdout, 'paste an api key');
       await type(stdin, 'sk-fine');
       await waitFor(stdout, 'ready: anthropic');
@@ -288,7 +361,12 @@ describe('onboarding: validation', () => {
       await settle(60);
     });
     expect(results).toEqual([
-      { outcome: 'ready', providerId: 'anthropic', firstPrompt: 'fix the bug in main.ts' },
+      {
+        outcome: 'ready',
+        providerId: 'anthropic',
+        model: 'anthropic/claude-opus-5',
+        firstPrompt: 'fix the bug in main.ts',
+      },
     ]);
   });
 
@@ -296,13 +374,21 @@ describe('onboarding: validation', () => {
     const { results } = await withApp({}, async ({ stdout, stdin }) => {
       await waitFor(stdout, 'anthropic');
       stdin.send('\r');
+      await selectFirstModel(stdout, stdin);
       await waitFor(stdout, 'paste an api key');
       await type(stdin, 'sk-fine');
       await waitFor(stdout, 'ready: anthropic');
       stdin.send('\r');
       await settle(60);
     });
-    expect(results).toEqual([{ outcome: 'ready', providerId: 'anthropic', firstPrompt: '' }]);
+    expect(results).toEqual([
+      {
+        outcome: 'ready',
+        providerId: 'anthropic',
+        model: 'anthropic/claude-opus-5',
+        firstPrompt: '',
+      },
+    ]);
   });
 });
 
@@ -310,7 +396,13 @@ describe('onboarding: browser sign-in', () => {
   test('shows the url as well as opening it', async () => {
     await withApp(
       {
-        providers: [{ id: 'openrouter', kind: 'oauth' }],
+        providers: [
+          {
+            id: 'openrouter',
+            models: [{ id: 'anthropic/claude-opus-5', name: 'Claude Opus 5' }],
+            kind: 'oauth',
+          },
+        ],
         signIn: (_id, onUrl) => {
           onUrl('https://openrouter.ai/authorize?abc');
           // Never resolves: the assertion is about the waiting screen, not
@@ -322,6 +414,7 @@ describe('onboarding: browser sign-in', () => {
       async ({ stdout, stdin }) => {
         await waitFor(stdout, 'openrouter');
         stdin.send('\r');
+        await selectFirstModel(stdout, stdin);
         await waitFor(stdout, 'https://openrouter.ai/authorize?abc');
       },
     );
@@ -330,7 +423,13 @@ describe('onboarding: browser sign-in', () => {
   test('a failed sign-in is shown without pretending it is a rejected key', async () => {
     await withApp(
       {
-        providers: [{ id: 'openrouter', kind: 'oauth' }],
+        providers: [
+          {
+            id: 'openrouter',
+            models: [{ id: 'anthropic/claude-opus-5', name: 'Claude Opus 5' }],
+            kind: 'oauth',
+          },
+        ],
         signIn: async () => {
           throw new Error('the browser flow timed out');
         },
@@ -338,6 +437,7 @@ describe('onboarding: browser sign-in', () => {
       async ({ stdout, stdin }) => {
         await waitFor(stdout, 'openrouter');
         stdin.send('\r');
+        await selectFirstModel(stdout, stdin);
         await waitFor(stdout, 'openrouter said:');
         expect(stdout.output).toContain('the browser flow timed out');
       },
