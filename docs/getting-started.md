@@ -38,6 +38,21 @@ Download the matching asset from GitHub Releases, make it executable on macOS
 or Linux (`chmod +x earshot-*`), and put it somewhere on `PATH`. The standalone
 build embeds Bun and does not require Node or Bun to be installed.
 
+### Updating
+
+```bash
+earshot update
+```
+
+One command for both install forms: it detects whether it is running as an npm
+install or a standalone binary and updates that one. A binary update is verified
+against the `SHA256SUMS` published with the release before anything is replaced.
+Nothing happens without a confirmation — `--yes` skips it, `--check` reports and
+exits **4** if an update is available. See
+[`earshot update`](cli.md#earshot-update).
+
+A source checkout updates with git, not this command.
+
 ### From source
 
 ```bash

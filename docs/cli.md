@@ -11,6 +11,7 @@ earshot mcp <list|trust|untrust>  manage MCP servers
 earshot extensions <list|trust|untrust>  manage in-process extensions
 earshot acp [flags]               serve editor clients over ACP v1 on stdio
 earshot doctor                    diagnose the local setup
+earshot update [--check]          update earshot to the latest release
 ```
 
 ## Global flags
@@ -151,6 +152,64 @@ It checks the earshot and Node versions, platform, Git, Bash (Git Bash on
 Windows), writable config/data locations, settings JSON, and POSIX auth-file
 permissions. `PASS` and `WARN` checks exit 0; any `FAIL` exits 1.
 
+## `earshot update`
+
+Updates earshot in place, whichever way it was installed.
+
+```bash
+earshot update            # check, confirm, update
+earshot update --check    # report only; exit 4 if an update is available
+earshot update --yes      # skip the confirmation
+```
+
+It works out how the running earshot got here before it does anything. A
+standalone binary is a Bun `--compile` executable, so its entry module lives in
+Bun's `$bunfs` virtual filesystem rather than on disk — that path is the
+signal. `process.versions.bun` is not, since it is equally set when running from
+a source checkout under Bun, and the executable's filename is not, since it is
+whatever it was renamed to.
+
+**Installed with npm.** Compares against the npm registry and, on a global npm
+install, offers to run:
+
+```
+earshot 0.2.0  ->  0.3.1   (installed with npm, globally)
+
+  npm install -g @raegent/earshot@latest
+
+run it now? [y/N]
+```
+
+If the package sits in a bun, pnpm, yarn or Volta tree instead, that manager's
+command is printed and nothing is run — `npm install -g` over one of those does
+not replace the install, it adds a second copy at another prefix and leaves PATH
+order to decide which one wins. A project-local install is printed too, not run.
+
+**Standalone binary.** Downloads the release asset matching this host, verifies
+it against the `SHA256SUMS` published with every release, and only then puts it
+in place. A mismatch replaces nothing.
+
+```
+earshot 0.2.0  ->  0.3.1   (standalone binary)
+  /Users/you/.local/bin/earshot   earshot-darwin-arm64
+
+download earshot-darwin-arm64 and replace it? [y/N] y
+  downloading… verifying SHA256… replacing…
+updated to 0.3.1
+```
+
+The download lands in the target's own directory, not the temp directory, so the
+final step is a same-filesystem rename rather than a copy across devices. On
+POSIX that rename is atomic and the running process keeps executing from the
+inode it already opened. On Windows a running `.exe` cannot be deleted or
+overwritten, but it can be renamed on the same volume, so the running image is
+moved to `earshot.exe.old-<pid>` and the new one takes its place; deleting that
+leftover fails while the process lives, and the next `earshot update` sweeps it.
+
+A symlinked binary is resolved first, so the file is replaced rather than the
+link. Running from a source checkout is not updatable and exits 2 — use git.
+Without a TTY to answer the prompt, it reports and changes nothing.
+
 ## Model references
 
 `provider/model` is unambiguous and always works:
@@ -227,6 +286,7 @@ Meaningful, so CI can branch on them:
 | `1` | Request failed — provider error, network, aborted |
 | `2` | Unknown model reference |
 | `3` | No credentials for the provider |
+| `4` | `earshot update --check` only: an update is available |
 
 ## Environment variables
 

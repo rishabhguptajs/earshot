@@ -8,6 +8,7 @@ import { headlessCommand } from './commands/headless.ts';
 import { interactiveCommand } from './commands/interactive.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { modelsCommand } from './commands/models.ts';
+import { updateCommand } from './commands/update.ts';
 
 const HELP = `earshot ${VERSION} - a terminal coding agent that actually listens
 
@@ -20,6 +21,7 @@ Usage
   earshot extensions <cmd>     list, trust or untrust in-process extensions
   earshot acp                  serve editor clients over ACP v1 on stdio
   earshot doctor               diagnose the local setup
+  earshot update [--check]     update earshot to the latest release
 
 Flags
   --model <provider/model>     model for this session
@@ -56,6 +58,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === 'extensions') return extensionsCommand(args);
   if (command === 'auth') return authCommand(args);
   if (command === 'doctor') return doctorCommand(args);
+  if (command === 'update') return updateCommand(args);
   if (command === 'acp') return acpCommand(args);
   if (command) {
     process.stderr.write(`earshot: "${command}" is not implemented yet\n`);

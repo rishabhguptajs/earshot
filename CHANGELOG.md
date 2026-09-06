@@ -9,6 +9,36 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 Nothing queued yet.
 
+## [0.3.0] - 2026-09-06
+
+### Added
+
+- **`earshot update`** — one command that updates earshot however it was
+  installed, replacing "rerun `npm install -g` and hope" or a manual trip to
+  GitHub Releases. It detects the install form first: a standalone binary is a
+  Bun `--compile` executable whose entry module lives in Bun's `$bunfs` virtual
+  filesystem, which is the only signal that survives the file being renamed or
+  symlinked — `process.versions.bun` is set when running from source under Bun
+  too, so it cannot be the discriminator.
+
+  An npm install is compared against the registry and, on a global npm tree,
+  offers to run the install for you. A bun, pnpm, yarn or Volta tree gets that
+  manager's command printed instead and nothing is run: `npm install -g` over
+  one of those does not replace the install, it adds a second copy at another
+  prefix and leaves PATH order to pick a winner.
+
+  A standalone binary is downloaded, verified against the `SHA256SUMS`
+  published with every release, and only then put in place — a mismatch
+  replaces nothing. The download lands in the target's own directory so the
+  final step is a same-filesystem rename, atomic on POSIX. On Windows, where a
+  running `.exe` cannot be deleted or overwritten but can be renamed, the
+  running image moves aside to `earshot.exe.old-<pid>` and the next run sweeps
+  it up.
+
+  Nothing is downloaded or installed without a confirmation. `--yes` skips it,
+  `--check` reports only and exits **4** when an update is available — a new
+  exit code, so CI can branch on it without parsing text.
+
 ## [0.2.0] - 2026-09-06
 
 ### Added
