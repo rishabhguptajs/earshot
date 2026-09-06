@@ -38,8 +38,9 @@ jobs:
             target: darwin-arm64
           # GitHub retired Intel (x64) hosted macOS runners; macos-13 jobs queue
           # forever with no runner to pick them up. Bun cross-compiles, so the
-          # x64 binary builds fine on the arm64 host - the smoke test that runs
-          # it uses the Rosetta 2 install every macos-14/15 runner ships with.
+          # x64 binary builds fine on the arm64 host - it just cannot run there
+          # until Rosetta 2 is installed, which current macos-14/15 images no
+          # longer ship with by default.
           - os: macos-14
             target: darwin-x64
           - os: ubuntu-latest
@@ -56,6 +57,13 @@ jobs:
           bun-version: 1.3.4
       - run: bun install --frozen-lockfile
       - run: bun run build:binaries ${{ matrix.target }}
+      - name: Install Rosetta 2
+        # Only the cross-arch leg needs this: an x64 binary compiled on this
+        # arm64 host cannot execute at all without it, and installing it
+        # unconditionally on every macOS job would slow down the native ones
+        # for nothing.
+        if: matrix.target == 'darwin-x64'
+        run: softwareupdate --install-rosetta --agree-to-license
       - name: Smoke test binary
         shell: bash
         run: ./artifacts/earshot-${{ matrix.target }}${{ startsWith(matrix.target, 'windows-') && '.exe' || '' }} --version
