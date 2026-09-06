@@ -36,7 +36,11 @@ jobs:
         include:
           - os: macos-14
             target: darwin-arm64
-          - os: macos-13
+          # GitHub retired Intel (x64) hosted macOS runners; macos-13 jobs queue
+          # forever with no runner to pick them up. Bun cross-compiles, so the
+          # x64 binary builds fine on the arm64 host - the smoke test that runs
+          # it uses the Rosetta 2 install every macos-14/15 runner ships with.
+          - os: macos-14
             target: darwin-x64
           - os: ubuntu-latest
             target: linux-x64
