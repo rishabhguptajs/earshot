@@ -42,6 +42,24 @@ export async function buildOnboardingOptions(wanted?: string): Promise<Onboardin
   };
 }
 
+/** Pick the closest equivalent model when onboarding changes the provider. */
+export function modelForOnboardingProvider(providerId: string, requestedRef: string): string {
+  const provider = buildRegistry().get(providerId);
+  if (!provider) throw new Error(`unknown provider "${providerId}"`);
+
+  const requestedId = requestedRef.includes('/')
+    ? requestedRef.slice(requestedRef.indexOf('/') + 1)
+    : requestedRef;
+  const models = provider.models();
+  const model =
+    models.find((candidate) => candidate.id === requestedRef) ??
+    models.find((candidate) => candidate.id === requestedId) ??
+    models[0];
+  if (!model) throw new Error(`${providerId} publishes no models`);
+
+  return `${providerId}/${model.id}`;
+}
+
 async function describe(provider: Provider, store: AuthStore): Promise<OnboardingProvider> {
   const configured = await resolveCredentials(provider, { store }).catch(() => undefined);
   return {

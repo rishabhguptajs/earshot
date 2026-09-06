@@ -11,7 +11,7 @@ import type { ParsedArgs } from '../args.ts';
 import { parseCuriosity, parseMaxCost } from '../budget.ts';
 import { startExtensions } from '../extensions/index.ts';
 import { loadImage } from '../image.ts';
-import { buildOnboardingOptions } from '../onboard.ts';
+import { buildOnboardingOptions, modelForOnboardingProvider } from '../onboard.ts';
 
 const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
@@ -68,7 +68,7 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
   }
 
   const extensions = await startExtensions(process.cwd());
-  const model = typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL;
+  let model = typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL;
   // `--no-onboarding` is for CI and for anyone who wants the old dead-end back.
   const onboardingAllowed = flags['no-onboarding'] !== true;
 
@@ -114,6 +114,9 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
           );
           await extensions.close();
           return 0;
+        }
+        if (result.providerId && result.providerId !== error.provider.id) {
+          model = modelForOnboardingProvider(result.providerId, model);
         }
         firstPrompt = result.firstPrompt ?? firstPrompt;
         continue;
