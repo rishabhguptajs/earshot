@@ -181,6 +181,38 @@ describe('a session end to end', () => {
     });
   });
 
+  test('a new session does not undo the previous one’s batches', async () => {
+    await inSandbox(async (cwd) => {
+      await writeFile(join(cwd, 'a.txt'), 'original\n');
+      const first = scripted([
+        { calls: [{ name: 'write', input: { path: 'a.txt', content: 'theirs\n' } }] },
+        { text: 'done' },
+      ]);
+      const earlier = await createSession({
+        cwd,
+        model: 'test/scripted',
+        mode: 'auto',
+        registry: first.registry,
+      });
+      await drain(earlier.agent.runTurn('write it', signal()));
+      await earlier.dispose();
+
+      // What a crash leaves behind: a finished batch in the directory's store,
+      // belonging to a session the next one never watched run.
+      const second = scripted([{ text: 'nothing to do' }]);
+      const later = await createSession({
+        cwd,
+        model: 'test/scripted',
+        mode: 'auto',
+        registry: second.registry,
+      });
+
+      expect(await later.undo()).toBeUndefined();
+      expect(await readFile(join(cwd, 'a.txt'), 'utf8')).toBe('theirs\n');
+      await later.dispose();
+    });
+  });
+
   test('resuming replays the previous transcript into the new turn', async () => {
     await inSandbox(async (cwd) => {
       const first = scripted([{ text: 'noted' }]);

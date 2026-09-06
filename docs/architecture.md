@@ -211,6 +211,15 @@ undo has silently rewritten the user's history.
 Per batch rather than per call, so undo restores a coherent unit. git being
 absent disables undo rather than failing.
 
+Scoped to the session that took the snapshot. The store is keyed by working
+directory, so every session in a project shares it, and an unscoped `/undo`
+stepped back through whatever was most recent in the directory — after a crash
+and a resume, that meant reverting a batch the user had never watched run. Older
+snapshots stay on disk and stay restorable by the session that made them; they
+are simply not offered to anyone else. A snapshot written before sessions were
+recorded belongs to none of them, because crediting it to whoever asks is the
+bug itself.
+
 ## TUI
 
 Completed turns go into Ink's `Static`; only the live region re-renders. That is

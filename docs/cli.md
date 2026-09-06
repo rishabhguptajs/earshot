@@ -181,7 +181,7 @@ Typed at the prompt during an interactive session.
 | `/tree` | List this session's prompts, numbered |
 | `/rewind <n>` | Go back to the state before prompt `n`; nothing is deleted |
 | `/fork <n>` | Branch from prompt `n` into a new transcript |
-| `/undo` | Revert the last tool batch's file changes; again to step back further |
+| `/undo` | Revert the last tool batch's file changes from this session; again to step back further |
 | `/exit` | Quit |
 
 Two keystrokes are bound rather than typed: when a prompt contains a correction
