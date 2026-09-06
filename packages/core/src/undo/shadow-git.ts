@@ -24,6 +24,21 @@ export interface Snapshot {
   timestamp: string;
   label: string;
   files: SnapshotFile[];
+  /**
+   * The session that took this snapshot.
+   *
+   * The store is keyed by working directory, so every session in a project
+   * writes into the same one. Without this field `/undo` walked back through
+   * whatever was most recent in the directory, which after a crash meant
+   * reaching into a previous session's batches: a user who resumed and pressed
+   * undo reverted work they had never seen this session do.
+   *
+   * Absent on snapshots written before this field existed. Those cannot be
+   * attributed to any session, so they are unreachable rather than being
+   * credited to the current one - crediting them would recreate exactly the
+   * bug the field exists to close.
+   */
+  sessionId?: string;
 }
 
 export interface SnapshotFile {
@@ -48,6 +63,8 @@ export class ShadowGit {
   private constructor(
     readonly gitDir: string,
     readonly cwd: string,
+    /** Stamped onto new snapshots and used to filter `list()`. */
+    readonly sessionId?: string,
   ) {}
 
   /**
@@ -56,7 +73,7 @@ export class ShadowGit {
    * snapshot them is worse than one that edits without an undo history. Callers
    * treat a missing store as "no snapshots available".
    */
-  static async open(cwd: string): Promise<ShadowGit | undefined> {
+  static async open(cwd: string, sessionId?: string): Promise<ShadowGit | undefined> {
     if (!(await hasExecutable('git', cwd))) return undefined;
 
     const gitDir = shadowDir(cwd);
@@ -67,7 +84,7 @@ export class ShadowGit {
       if (result.code !== 0) return undefined;
     }
     await mkdir(join(gitDir, 'snapshots'), { recursive: true });
-    return new ShadowGit(gitDir, cwd);
+    return new ShadowGit(gitDir, cwd, sessionId);
   }
 
   private run(args: string[], maxBytes?: number) {
@@ -120,6 +137,7 @@ export class ShadowGit {
       timestamp: new Date().toISOString(),
       label,
       files,
+      ...(this.sessionId !== undefined ? { sessionId: this.sessionId } : {}),
     };
     await writeFile(
       join(this.gitDir, 'snapshots', `${snapshot.id}.json`),
@@ -129,7 +147,22 @@ export class ShadowGit {
     return snapshot;
   }
 
+  /**
+   * Snapshots this session may undo, oldest first.
+   *
+   * Scoped rather than unscoped by default, so the safe reading is the one a
+   * caller gets without asking. A store opened without a session id sees
+   * nothing: it cannot tell its own batches from another session's, and
+   * guessing is what produced the bug.
+   */
   async list(): Promise<Snapshot[]> {
+    const all = await this.listAll();
+    if (this.sessionId === undefined) return [];
+    return all.filter((snapshot) => snapshot.sessionId === this.sessionId);
+  }
+
+  /** Every snapshot in the directory, whichever session wrote it. */
+  async listAll(): Promise<Snapshot[]> {
     const dir = join(this.gitDir, 'snapshots');
     const names = await readdir(dir).catch(() => []);
     const snapshots: Snapshot[] = [];
