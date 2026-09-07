@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { chmod, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, sep } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { VERSION } from '@earshot/core';
@@ -103,6 +103,10 @@ export function detectInstall(options: DetectOptions): Install {
   const { execPath, moduleUrl, bunVersion, platform, arch } = options;
   const realpath = options.realpath ?? ((path: string) => path);
   const file = modulePath(moduleUrl);
+  // Detection is intentionally pure: classify the path described by the
+  // fixture/runtime, not the OS currently executing this function. Normalising
+  // both separators also handles file URLs captured on another platform.
+  const portableFile = file.replaceAll('\\', '/');
 
   if (BUNFS_MARKERS.some((marker) => file.includes(marker)) && bunVersion !== undefined) {
     const asset = ASSETS[`${platform}-${arch}`];
@@ -117,11 +121,11 @@ export function detectInstall(options: DetectOptions): Install {
     return { kind: 'binary', path: target, asset };
   }
 
-  const marker = `${sep}node_modules${sep}${PACKAGE.split('/').join(sep)}${sep}`;
-  const index = `${file}${sep}`.indexOf(marker);
+  const marker = `/node_modules/${PACKAGE}/`;
+  const index = `${portableFile}/`.indexOf(marker);
   if (index !== -1) {
-    const packageDir = file.slice(0, index + marker.length - 1);
-    const tree = packageDir.slice(0, packageDir.indexOf(`${sep}node_modules${sep}`));
+    const packageDir = portableFile.slice(0, index + marker.length - 1);
+    const tree = packageDir.slice(0, packageDir.indexOf('/node_modules/'));
     const isProjectRoot = options.isProjectRoot ?? (() => false);
     return {
       kind: 'npm',
@@ -131,7 +135,7 @@ export function detectInstall(options: DetectOptions): Install {
     };
   }
 
-  if (file.includes(`${sep}packages${sep}cli${sep}`) || file.endsWith('.ts')) {
+  if (portableFile.includes('/packages/cli/') || portableFile.endsWith('.ts')) {
     return { kind: 'source', path: file, reason: 'running from a source checkout' };
   }
   return { kind: 'unknown', path: file, reason: `cannot tell how ${execPath} was installed` };

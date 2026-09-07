@@ -9,6 +9,13 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 Nothing queued yet.
 
+## [0.4.1] - 2026-09-08
+
+### Fixed
+
+- Made npm-install detection path-separator neutral, so `earshot update` works
+  and its install detection tests pass on Windows as well as macOS and Linux.
+
 ## [0.4.0] - 2026-09-08
 
 ### Added
