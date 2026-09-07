@@ -83,8 +83,8 @@ cd packages/cli && npm link
 
 Skip this section on a first run in a real terminal: starting `earshot` with no
 credentials configured opens the TUI into onboarding — pick a provider, search
-and select one of its model IDs, then sign in or paste a key. That exact model is
-checked with one live call before you land in your first turn. Nothing is printed or logged: the key goes straight into the same
+and select one of its model IDs, then sign in or paste a key. That model becomes
+your global default, so later starts go directly to a fresh chat. Nothing is printed or logged: the key goes straight into the same
 `auth.json` `earshot auth login` writes to, `0600` and atomic. `--no-onboarding`
 restores the old dead end for scripts and CI, and `earshot -p` and `earshot acp`
 never onboard — a script has nobody to answer a prompt, so a missing credential
@@ -157,6 +157,11 @@ Pick a model explicitly — the default is `anthropic/claude-opus-5`:
 earshot -p "hello" --model openrouter/anthropic/claude-opus-5
 earshot -p "hello" --model ollama/qwen3-coder
 ```
+
+Inside the TUI, `/model` opens the searchable model picker and `/reasoning`
+changes effort. Earshot remembers these choices per project. Plain `earshot`
+starts a new chat; `earshot sessions` browses saved chats and `earshot
+--continue` resumes the latest one.
 
 Get structured output instead of prose:
 

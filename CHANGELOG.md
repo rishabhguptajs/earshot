@@ -9,6 +9,32 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 Nothing queued yet.
 
+## [0.4.0] - 2026-09-08
+
+### Added
+
+- Persistent global and project model preferences, plus per-model reasoning
+  effort with `/reasoning` and `--reasoning-effort` controls.
+- Searchable saved-chat navigation through both `earshot sessions` and the
+  in-session `/sessions` command.
+- Immediate animated turn feedback for preparation, thinking, reasoning, and
+  tool execution. Streamed reasoning is visible by default and can be toggled
+  with `/thinking show|hide`.
+
+### Changed
+
+- Plain `earshot` now starts a new chat, while `--continue`, `--resume`, and the
+  session picker explicitly resume existing transcripts.
+- `/model` now opens a searchable, credential-aware picker and remembers the
+  selected model. Existing credentials are reused without prompting again.
+- Model and reasoning changes are recorded as append-only transcript entries,
+  preserving compatibility with legacy transcripts.
+
+### Fixed
+
+- Removed the onboarding prompt-entry screen that caused the first user prompt
+  to appear and enter model history twice.
+
 ## [0.3.2] - 2026-09-06
 
 ### Fixed

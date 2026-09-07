@@ -1,9 +1,13 @@
 import { type AcpSessionFactory, runAcpServer } from '@earshot/acp';
-import { createSession, isPermissionMode, listSessions, type PermissionMode } from '@earshot/core';
+import {
+  createSession,
+  DEFAULT_MODEL,
+  isPermissionMode,
+  listSessions,
+  type PermissionMode,
+} from '@earshot/core';
 import type { ParsedArgs } from '../args.ts';
 import { startExtensions } from '../extensions/index.ts';
-
-const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
 export async function acpCommand(args: ParsedArgs): Promise<number> {
   const requested = args.flags['permission-mode'];
@@ -16,7 +20,8 @@ export async function acpCommand(args: ParsedArgs): Promise<number> {
     mode = requested;
   }
 
-  const model = typeof args.flags.model === 'string' ? args.flags.model : DEFAULT_MODEL;
+  const requestedModel = typeof args.flags.model === 'string' ? args.flags.model : undefined;
+  const model = requestedModel ?? DEFAULT_MODEL;
   const apiKey = typeof args.flags['api-key'] === 'string' ? args.flags['api-key'] : undefined;
   const sessionFactory: AcpSessionFactory = async ({ cwd, resumeSessionId }) => {
     const extensions = await startExtensions(cwd);
@@ -32,7 +37,7 @@ export async function acpCommand(args: ParsedArgs): Promise<number> {
     try {
       return await createSession({
         cwd,
-        model,
+        ...(requestedModel ? { model: requestedModel } : {}),
         extraTools: extensions.tools,
         problems: extensions.problems,
         onDispose: () => extensions.close(),

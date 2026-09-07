@@ -1,9 +1,11 @@
 import type { PermissionMode, TodoItem } from '@earshot/core';
+import type { ReasoningEffort } from '@earshot/providers';
 import { Box, Text } from 'ink';
 import { MODE_COLOR, MODE_LABEL, theme } from '../theme.ts';
 
 export interface StatusLineProps {
   model: string;
+  reasoningEffort?: ReasoningEffort;
   mode: PermissionMode;
   costUsd: number;
   todos: TodoItem[];
@@ -23,6 +25,7 @@ export interface StatusLineProps {
  */
 export function StatusLine({
   model,
+  reasoningEffort,
   mode,
   costUsd,
   todos,
@@ -39,6 +42,7 @@ export function StatusLine({
     <Box>
       <Text color={MODE_COLOR[mode] ?? theme.muted}>{MODE_LABEL[mode] ?? mode}</Text>
       <Text color={theme.muted}> · {model}</Text>
+      {reasoningEffort && <Text color={theme.muted}> · {reasoningEffort}</Text>}
       <Text color={theme.muted}> · ${costUsd.toFixed(4)}</Text>
       {context.window > 0 && (
         // Coloured only when it is close enough to matter: a percentage that is

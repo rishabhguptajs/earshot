@@ -1,13 +1,20 @@
 import { platform } from 'node:os';
-import type { CreatedSession, UserPrompt } from '@earshot/core';
+import type { CreatedSession, SessionInfo, UserPrompt } from '@earshot/core';
 import { render } from 'ink';
 import { App } from './app.tsx';
 import { Onboarding, type OnboardingOptions, type OnboardingResult } from './onboarding.tsx';
+import { SessionPicker } from './sessions.tsx';
 
 export interface RunTuiOptions {
   session: CreatedSession;
   model: string;
   initialPrompt?: UserPrompt;
+  modelOptions?: OnboardingOptions;
+}
+
+export interface RunTuiResult {
+  exitCode: number;
+  resumePath?: string;
 }
 
 /**
@@ -28,14 +35,19 @@ const WINDOWS_MAX_FPS = 30;
  * detection has to be feature-flagged off on Windows for the same reason, which
  * is why colour support is assumed from Ink's own detection rather than probed.
  */
-export async function runTui(options: RunTuiOptions): Promise<number> {
+export async function runTui(options: RunTuiOptions): Promise<RunTuiResult> {
   const isWindows = platform() === 'win32';
+  let resumePath: string | undefined;
 
   const instance = render(
     <App
       session={options.session}
       model={options.model}
       {...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {})}
+      {...(options.modelOptions ? { modelOptions: options.modelOptions } : {})}
+      onResume={(path) => {
+        resumePath = path;
+      }}
     />,
     {
       // Ctrl-C is handled by the app so a running turn can be interrupted without
@@ -53,7 +65,7 @@ export async function runTui(options: RunTuiOptions): Promise<number> {
   } finally {
     await options.session.dispose();
   }
-  return 0;
+  return { exitCode: 0, ...(resumePath ? { resumePath } : {}) };
 }
 
 /**
@@ -84,4 +96,22 @@ export async function runOnboarding(options: OnboardingOptions): Promise<Onboard
 
   await instance.waitUntilExit();
   return result;
+}
+
+export async function runSessionPicker(
+  sessions: readonly SessionInfo[],
+): Promise<string | undefined> {
+  const isWindows = platform() === 'win32';
+  let selected: string | undefined;
+  const instance = render(
+    <SessionPicker
+      sessions={sessions}
+      onDone={(path) => {
+        selected = path;
+      }}
+    />,
+    { exitOnCtrlC: false, patchConsole: true, ...(isWindows ? { maxFps: WINDOWS_MAX_FPS } : {}) },
+  );
+  await instance.waitUntilExit();
+  return selected;
 }

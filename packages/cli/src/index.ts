@@ -8,6 +8,7 @@ import { headlessCommand } from './commands/headless.ts';
 import { interactiveCommand } from './commands/interactive.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { modelsCommand } from './commands/models.ts';
+import { sessionsCommand } from './commands/sessions.ts';
 import { updateCommand } from './commands/update.ts';
 
 const HELP = `earshot ${VERSION} - a terminal coding agent that actually listens
@@ -22,6 +23,7 @@ Usage
   earshot acp                  serve editor clients over ACP v1 on stdio
   earshot doctor               diagnose the local setup
   earshot update [--check]     update earshot to the latest release
+  earshot sessions             browse and resume saved chats for this project
 
 Flags
   --model <provider/model>     model for this session
@@ -33,6 +35,7 @@ Flags
   --image <path|https-url>     attach one PNG, JPEG, GIF or WebP image
   --max-cost <usd>             stop and ask before spending past this
   --curiosity <level>          low, normal or high: how readily it asks
+  --reasoning-effort <level>   auto | none | low | medium | high | xhigh
   --version, -v                print the version
   --help, -h                   print this help
 `;
@@ -59,6 +62,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === 'auth') return authCommand(args);
   if (command === 'doctor') return doctorCommand(args);
   if (command === 'update') return updateCommand(args);
+  if (command === 'sessions') return sessionsCommand(args);
   if (command === 'acp') return acpCommand(args);
   if (command) {
     process.stderr.write(`earshot: "${command}" is not implemented yet\n`);

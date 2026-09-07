@@ -3,6 +3,7 @@ import type {
   ImagePart,
   Message,
   ProviderRegistry,
+  ReasoningEffort,
   TextPart,
   ToolCallPart,
   ToolDefinition,
@@ -90,6 +91,7 @@ export type AgentEvent =
 export interface AgentOptions {
   registry: ProviderRegistry;
   model: ResolvedModel;
+  reasoningEffort?: ReasoningEffort;
   cwd: string;
   system: string;
   mode: PermissionMode;
@@ -172,6 +174,7 @@ export class Agent {
   private rules: Rule[];
   /** Mutable because `/model` swaps it; `options.model` is only the initial one. */
   private resolved: ResolvedModel;
+  private effort: ReasoningEffort | undefined;
   private mode: PermissionMode;
   private totalCostUsd = 0;
   private maxCostUsd: number | undefined;
@@ -243,11 +246,20 @@ export class Agent {
     this.systemPrompt = options.system;
     this.maxCostUsd = options.maxCostUsd;
     this.resolved = options.model;
+    this.effort = options.reasoningEffort;
   }
 
   /** The model this session is currently calling. */
   get model(): ResolvedModel {
     return this.resolved;
+  }
+
+  get reasoningEffort(): ReasoningEffort | undefined {
+    return this.effort;
+  }
+
+  setReasoningEffort(effort: ReasoningEffort | undefined): void {
+    this.effort = effort;
   }
 
   /**
@@ -489,6 +501,7 @@ export class Agent {
         system: this.effectiveSystem,
         messages,
         tools: this.offeredTools(),
+        ...(this.effort ? { reasoningEffort: this.effort } : {}),
         abortSignal: signal,
       })) {
         switch (event.type) {
@@ -997,6 +1010,7 @@ export class Agent {
     for await (const event of streamModel(this.options.registry, this.resolved, {
       system: SUMMARY_PROMPT,
       messages: [...messages, { role: 'user', content: [{ type: 'text', text: SUMMARY_PROMPT }] }],
+      ...(this.effort ? { reasoningEffort: this.effort } : {}),
       abortSignal: signal,
     })) {
       if (event.type === 'text_delta') text += event.text;

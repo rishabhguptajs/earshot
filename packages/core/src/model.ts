@@ -15,6 +15,8 @@ export interface ResolvedModel {
   credentials: Credentials;
 }
 
+export const DEFAULT_MODEL = 'anthropic/claude-opus-5';
+
 export class MissingCredentialsError extends Error {
   constructor(readonly provider: Provider) {
     super(describeMissingAuth(provider));

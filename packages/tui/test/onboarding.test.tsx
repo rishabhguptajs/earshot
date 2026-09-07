@@ -212,7 +212,7 @@ describe('onboarding: pasting a key', () => {
       expect(stdout.output).toContain('•');
       stdin.send('\r');
       await settle(60);
-      await waitFor(stdout, 'ready: anthropic');
+      await settle(60);
       expect(stdout.output).not.toContain('sk-super-secret-value');
     });
     expect(stored).toEqual([{ providerId: 'anthropic', key: 'sk-super-secret-value' }]);
@@ -247,7 +247,7 @@ describe('onboarding: pasting a key', () => {
 });
 
 describe('onboarding: model choice', () => {
-  test('filters models and probes the selected model', async () => {
+  test('filters models and immediately uses an already configured provider', async () => {
     const probed: Array<{ providerId: string; modelId: string }> = [];
     const { results } = await withApp(
       {
@@ -272,18 +272,16 @@ describe('onboarding: model choice', () => {
         stdin.send('\r');
         await waitFor(stdout, 'choose a model from anthropic');
         await type(stdin, 'opus');
-        await waitFor(stdout, 'ready: anthropic/claude-opus-5');
-        stdin.send('\r');
         await settle(60);
       },
     );
-    expect(probed).toEqual([{ providerId: 'anthropic', modelId: 'claude-opus-5' }]);
+    expect(probed).toEqual([]);
     expect(results).toEqual([
       {
         outcome: 'ready',
         providerId: 'anthropic',
         model: 'anthropic/claude-opus-5',
-        firstPrompt: '',
+        scope: 'global',
       },
     ]);
   });
@@ -339,46 +337,30 @@ describe('onboarding: validation', () => {
         await waitFor(stdout, 'could not reach');
         expect(stdout.output).toContain('keep it anyway');
         stdin.send('k');
-        await waitFor(stdout, 'ready: anthropic');
+        await settle(60);
       },
     );
     // Unlike a rejection, an unreachable probe never removes what was stored -
     // an unreachable network must not be able to lock someone out of their own
     // setup.
     expect(forgotten).toHaveLength(0);
-    expect(results).toHaveLength(0);
-  });
-
-  test('a first prompt typed on the ready screen is returned', async () => {
-    const { results } = await withApp({}, async ({ stdout, stdin }) => {
-      await waitFor(stdout, 'anthropic');
-      stdin.send('\r');
-      await selectFirstModel(stdout, stdin);
-      await waitFor(stdout, 'paste an api key');
-      await type(stdin, 'sk-fine');
-      await waitFor(stdout, 'ready: anthropic');
-      await type(stdin, 'fix the bug in main.ts');
-      await settle(60);
-    });
     expect(results).toEqual([
       {
         outcome: 'ready',
         providerId: 'anthropic',
         model: 'anthropic/claude-opus-5',
-        firstPrompt: 'fix the bug in main.ts',
+        scope: 'global',
       },
     ]);
   });
 
-  test('an empty first prompt still finishes as ready', async () => {
+  test('finishes immediately without asking for a first prompt', async () => {
     const { results } = await withApp({}, async ({ stdout, stdin }) => {
       await waitFor(stdout, 'anthropic');
       stdin.send('\r');
       await selectFirstModel(stdout, stdin);
       await waitFor(stdout, 'paste an api key');
       await type(stdin, 'sk-fine');
-      await waitFor(stdout, 'ready: anthropic');
-      stdin.send('\r');
       await settle(60);
     });
     expect(results).toEqual([
@@ -386,7 +368,36 @@ describe('onboarding: validation', () => {
         outcome: 'ready',
         providerId: 'anthropic',
         model: 'anthropic/claude-opus-5',
-        firstPrompt: '',
+        scope: 'global',
+      },
+    ]);
+  });
+
+  test('configured providers finish without probing or credential prompts', async () => {
+    const { results } = await withApp(
+      {
+        providers: [
+          {
+            id: 'anthropic',
+            models: [{ id: 'claude-opus-5', name: 'Claude Opus 5' }],
+            kind: 'api-key',
+            configured: 'api key set',
+          },
+        ],
+      },
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'anthropic');
+        stdin.send('\r');
+        await selectFirstModel(stdout, stdin);
+        await settle(60);
+      },
+    );
+    expect(results).toEqual([
+      {
+        outcome: 'ready',
+        providerId: 'anthropic',
+        model: 'anthropic/claude-opus-5',
+        scope: 'global',
       },
     ]);
   });

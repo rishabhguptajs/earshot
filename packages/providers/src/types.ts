@@ -92,6 +92,10 @@ export interface ToolDefinition {
 }
 
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+export const REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return typeof value === 'string' && REASONING_EFFORTS.includes(value as ReasoningEffort);
+}
 
 export interface ModelRequest {
   modelId: string;

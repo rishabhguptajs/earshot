@@ -14,6 +14,7 @@ import {
   detectPreference,
   expandCommand,
   isPermissionMode,
+  listSessions,
   loadMemories,
   openInEditor,
   PERMISSION_MODES,
@@ -24,17 +25,22 @@ import {
   saveMemory,
   savePlan,
 } from '@earshot/core';
+import type { ReasoningEffort } from '@earshot/providers';
 import { Box, Static, Text, useApp, useInput } from 'ink';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type CommandName, commandRows, findCommand } from './commands.ts';
+import { Activity } from './components/activity.tsx';
 import { CommandMenu, menuEntries } from './components/command-menu.tsx';
 import { Markdown } from './components/markdown.tsx';
 import { MemoryCapture } from './components/memory-capture.tsx';
 import { PermissionPrompt } from './components/permission.tsx';
 import { QuestionPrompt } from './components/question.tsx';
+import { ReasoningPicker } from './components/reasoning-picker.tsx';
 import { StatusLine } from './components/status.tsx';
 import { TextInput } from './components/text-input.tsx';
 import { ToolBlock } from './components/tool-block.tsx';
+import { Onboarding, type OnboardingOptions, type OnboardingResult } from './onboarding.tsx';
+import { SessionPicker } from './sessions.tsx';
 import { theme } from './theme.ts';
 
 /**
@@ -50,13 +56,16 @@ export type ScrollItem =
   | { kind: 'user'; id: string; text: string }
   | { kind: 'assistant'; id: string; text: string }
   | { kind: 'tool'; id: string; name: string; title?: string; output?: string; isError?: boolean }
-  | { kind: 'notice'; id: string; text: string; color?: string };
+  | { kind: 'notice'; id: string; text: string; color?: string }
+  | { kind: 'reasoning'; id: string; text: string };
 
 export interface AppProps {
   session: CreatedSession;
   model: string;
   /** Run immediately on start, for `earshot "do the thing"`. */
   initialPrompt?: UserPrompt;
+  modelOptions?: OnboardingOptions;
+  onResume?: (path: string) => void;
 }
 
 let sequence = 0;
@@ -69,7 +78,13 @@ function promptLabel(prompt: UserPrompt): string {
     .join('\n');
 }
 
-export function App({ session, model: initialModel, initialPrompt }: AppProps) {
+export function App({
+  session,
+  model: initialModel,
+  initialPrompt,
+  modelOptions,
+  onResume,
+}: AppProps) {
   const { exit } = useApp();
   const agent: Agent = session.agent;
 
@@ -86,6 +101,14 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
     })),
   );
   const [live, setLive] = useState('');
+  const [reasoningLive, setReasoningLive] = useState('');
+  const [showThinking, setShowThinking] = useState(true);
+  const [activity, setActivity] = useState<'preparing' | 'thinking' | 'reasoning' | undefined>();
+  const [choosingModel, setChoosingModel] = useState(false);
+  const [choosingReasoning, setChoosingReasoning] = useState(false);
+  const [sessionChoices, setSessionChoices] = useState<
+    Awaited<ReturnType<typeof listSessions>> | undefined
+  >();
   const [runningTool, setRunningTool] = useState<string | undefined>();
   const [input, setInput] = useState('');
   /** Highlighted row of the `/` menu; reset whenever the line changes. */
@@ -140,6 +163,7 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
   const runTurn = useCallback(
     async (prompt: UserPrompt) => {
       setBusy(true);
+      setActivity('preparing');
       // Cleared per turn: a stale answer read back as this turn's plan is worse
       // than no plan at all.
       lastAssistantText.current = '';
@@ -148,13 +172,29 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
       const abort = new AbortController();
       controller.current = abort;
       let assistantText = '';
+      let reasoningText = '';
+      let reasoningFlushed = false;
 
       try {
         for await (const event of agent.runTurn(prompt, abort.signal)) {
           switch (event.type) {
+            case 'model_start':
+              setActivity('thinking');
+              break;
             case 'text_delta':
+              if (!reasoningFlushed && reasoningText.trim() !== '' && showThinking) {
+                push({ kind: 'reasoning', id: nextId(), text: reasoningText.trimEnd() });
+                reasoningFlushed = true;
+                setReasoningLive('');
+              }
+              setActivity(undefined);
               assistantText += event.text;
               setLive(assistantText);
+              break;
+            case 'reasoning_delta':
+              setActivity('reasoning');
+              reasoningText += event.text;
+              if (showThinking) setReasoningLive(reasoningText);
               break;
             case 'intent':
               // The intent itself is the assistant text already on screen just
@@ -172,6 +212,7 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
               }
               break;
             case 'tool_start':
+              setActivity(undefined);
               // The assistant's prose is flushed to scrollback before the tool
               // block, so the two never re-order once the tool finishes.
               if (assistantText.trim() !== '') {
@@ -259,6 +300,7 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
               });
               break;
             case 'error':
+              setActivity(undefined);
               push({
                 kind: 'notice',
                 id: nextId(),
@@ -290,18 +332,23 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
           setQueued(agent.pendingSteers);
         }
       } finally {
+        if (!reasoningFlushed && reasoningText.trim() !== '' && showThinking) {
+          push({ kind: 'reasoning', id: nextId(), text: reasoningText.trimEnd() });
+        }
         if (assistantText.trim() !== '') {
           lastAssistantText.current = assistantText;
           push({ kind: 'assistant', id: nextId(), text: assistantText.trimEnd() });
         }
         setLive('');
+        setReasoningLive('');
+        setActivity(undefined);
         setRunningTool(undefined);
         setBusy(false);
         setQueued(agent.pendingSteers);
         controller.current = undefined;
       }
     },
-    [agent, push],
+    [agent, push, showThinking],
   );
 
   const started = useRef(false);
@@ -578,29 +625,26 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
   const switchModel = useCallback(
     async (ref?: string) => {
       if (!ref) {
-        const current = agent.model;
-        const price = current.model.cost;
-        push({
-          kind: 'notice',
-          id: nextId(),
-          text: [
-            `  ${current.provider.id}/${current.model.id}`,
-            `  context  ${(current.model.contextWindow ?? 0).toLocaleString()} tokens`,
-            `  price    $${price?.input ?? '?'} in / $${price?.output ?? '?'} out per million`,
-            '',
-            '  /model <provider/model> switches; `earshot models` lists them',
-          ].join('\n'),
-        });
+        if (modelOptions) setChoosingModel(true);
+        else push({ kind: 'notice', id: nextId(), text: 'model picker is unavailable' });
         return;
       }
       try {
         const resolved = await agent.changeModel(ref);
         const next = `${resolved.provider.id}/${resolved.model.id}`;
+        const effort = modelOptions?.reasoningFor?.(next);
+        agent.setReasoningEffort(effort);
         setModel(next);
         // The system prompt names the model; leaving the old name in it would
         // tell the new model it is something else.
         await refreshSystemPrompt(agent, next, session.skills);
-        push({ kind: 'notice', id: nextId(), text: `model: ${next}` });
+        await modelOptions?.remember?.(next, effort, 'project');
+        await session.recordConfiguration({ model: next, reasoningEffort: effort ?? null });
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `model: ${next}${effort ? ` · ${effort}` : ''}`,
+        });
       } catch (error) {
         push({
           kind: 'notice',
@@ -610,7 +654,95 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
         });
       }
     },
-    [agent, push, session.skills],
+    [agent, modelOptions, push, session],
+  );
+
+  const finishModelChoice = useCallback(
+    async (result: OnboardingResult) => {
+      if (result.outcome === 'quit' || !result.model) {
+        setChoosingModel(false);
+        return;
+      }
+      try {
+        const resolved = await agent.changeModel(result.model);
+        const next = `${resolved.provider.id}/${resolved.model.id}`;
+        agent.setReasoningEffort(result.reasoningEffort);
+        setModel(next);
+        await refreshSystemPrompt(agent, next, session.skills);
+        await modelOptions?.remember?.(next, result.reasoningEffort, result.scope ?? 'project');
+        await session.recordConfiguration({
+          model: next,
+          reasoningEffort: result.reasoningEffort ?? null,
+        });
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `model: ${next}${result.reasoningEffort ? ` · ${result.reasoningEffort}` : ' · auto'}`,
+        });
+      } catch (error) {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: (error as Error).message,
+          color: theme.warning,
+        });
+      } finally {
+        setChoosingModel(false);
+      }
+    },
+    [agent, modelOptions, push, session, session.skills],
+  );
+
+  const changeReasoning = useCallback(
+    async (argument?: string) => {
+      const value = argument?.trim().toLowerCase();
+      if (!value) {
+        if (!agent.model.model.capabilities.reasoning) {
+          push({
+            kind: 'notice',
+            id: nextId(),
+            text: `${agent.model.model.name} does not support reasoning`,
+            color: theme.warning,
+          });
+        } else setChoosingReasoning(true);
+        return;
+      }
+      const effort = value === 'auto' ? undefined : (value as ReasoningEffort);
+      if (value !== 'auto' && !['none', 'low', 'medium', 'high', 'xhigh'].includes(value)) {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `unknown reasoning effort "${value}"`,
+          color: theme.warning,
+        });
+        return;
+      }
+      if (!agent.model.model.capabilities.reasoning && effort !== undefined) {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `${agent.model.model.name} does not support reasoning`,
+          color: theme.warning,
+        });
+        return;
+      }
+      agent.setReasoningEffort(effort);
+      await modelOptions?.remember?.(model, effort, 'project');
+      await session.recordConfiguration({ reasoningEffort: effort ?? null });
+      push({ kind: 'notice', id: nextId(), text: `reasoning: ${effort ?? 'auto'}` });
+    },
+    [agent, model, modelOptions, push, session],
+  );
+
+  const finishReasoningChoice = useCallback(
+    async (effort: ReasoningEffort | undefined) => {
+      setChoosingReasoning(false);
+      agent.setReasoningEffort(effort);
+      await modelOptions?.remember?.(model, effort, 'project');
+      await session.recordConfiguration({ reasoningEffort: effort ?? null });
+      push({ kind: 'notice', id: nextId(), text: `reasoning: ${effort ?? 'auto'}` });
+    },
+    [agent, model, modelOptions, push, session],
   );
 
   /** `/compact` - the 80% compaction, asked for early. */
@@ -661,6 +793,21 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
     exit: () => exit(),
     help: () => push({ kind: 'notice', id: nextId(), text: describeCommands(session) }),
     model: (argument) => void switchModel(argument),
+    reasoning: (argument) => void changeReasoning(argument),
+    thinking: (argument) => {
+      if (argument !== 'show' && argument !== 'hide') {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `thinking: ${showThinking ? 'shown' : 'hidden'}\n/thinking <show|hide>`,
+        });
+        return;
+      }
+      const shown = argument === 'show';
+      setShowThinking(shown);
+      if (!shown) setReasoningLive('');
+      push({ kind: 'notice', id: nextId(), text: `thinking: ${shown ? 'shown' : 'hidden'}` });
+    },
     compact: () => void compactNow(),
     context: () => {
       const { tokens, window } = agent.contextUse;
@@ -762,6 +909,9 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
     },
     memory: (argument) => void showMemories(argument),
     tree: (argument) => void sessionTree('tree', argument),
+    sessions: () => {
+      void listSessions(agent.cwd).then((saved) => setSessionChoices(saved));
+    },
     rewind: (argument) => void sessionTree('rewind', argument),
     fork: (argument) => void sessionTree('fork', argument),
     undo: () => void undoLast(),
@@ -873,7 +1023,8 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
   );
 
   // Input is disabled while a prompt is open so the two do not both consume keys.
-  const inputActive = !pending && !question;
+  const inputActive =
+    !pending && !question && !choosingModel && !choosingReasoning && !sessionChoices;
 
   // Open while the line is a bare command name being typed. A space means an
   // argument is being written, and the user has already chosen.
@@ -938,12 +1089,67 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
     <Box flexDirection="column">
       <Static items={items}>{(item) => <ScrollRow key={item.id} item={item} />}</Static>
 
-      {live !== '' && (
+      {choosingModel && modelOptions && (
+        <Onboarding
+          {...modelOptions}
+          wanted={agent.model.provider.id}
+          wantedModel={model}
+          embedded
+          defaultScope="project"
+          onDone={(result) => void finishModelChoice(result)}
+        />
+      )}
+      {choosingReasoning && (
+        <ReasoningPicker
+          {...(agent.reasoningEffort ? { current: agent.reasoningEffort } : {})}
+          onDone={finishReasoningChoice}
+          onCancel={() => setChoosingReasoning(false)}
+        />
+      )}
+      {sessionChoices && (
+        <SessionPicker
+          sessions={sessionChoices}
+          embedded
+          onDone={(path) => {
+            setSessionChoices(undefined);
+            if (path) {
+              onResume?.(path);
+              exit();
+            }
+          }}
+        />
+      )}
+
+      {!choosingModel &&
+        !choosingReasoning &&
+        !sessionChoices &&
+        reasoningLive !== '' &&
+        showThinking && (
+          <Box marginTop={1}>
+            <Text color={theme.reasoning}>{reasoningLive}</Text>
+          </Box>
+        )}
+      {!choosingModel && !choosingReasoning && live !== '' && (
         <Box marginTop={1}>
           <Markdown text={live} />
         </Box>
       )}
       {runningTool && <ToolBlock name={runningTool} running />}
+      {!choosingModel &&
+        !choosingReasoning &&
+        activity &&
+        live === '' &&
+        !runningTool &&
+        !pending &&
+        !question && (
+          <Box marginTop={1}>
+            <Activity
+              {...(activity === 'preparing'
+                ? {}
+                : { label: activity === 'thinking' ? 'Thinking' : 'Reasoning' })}
+            />
+          </Box>
+        )}
 
       {pending && (
         <PermissionPrompt
@@ -988,6 +1194,7 @@ export function App({ session, model: initialModel, initialPrompt }: AppProps) {
 
       <StatusLine
         model={model}
+        {...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {})}
         mode={mode}
         costUsd={cost}
         todos={todos}
@@ -1013,6 +1220,13 @@ function ScrollRow({ item }: { item: ScrollItem }) {
     return (
       <Box marginTop={1}>
         <Markdown text={item.text} />
+      </Box>
+    );
+  }
+  if (item.kind === 'reasoning') {
+    return (
+      <Box marginTop={1}>
+        <Text color={theme.reasoning}>{item.text}</Text>
       </Box>
     );
   }

@@ -50,6 +50,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'acp',
     'doctor',
     'update',
+    'sessions',
   ]);
   const command =
     positionals[0] !== undefined && known.has(positionals[0]) ? positionals[0] : undefined;

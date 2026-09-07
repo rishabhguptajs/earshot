@@ -26,6 +26,7 @@ export default defineConfig({
         items: [
           { text: 'Getting started', link: '/getting-started' },
           { text: 'CLI reference', link: '/cli' },
+          { text: 'Chats and transcripts', link: '/sessions' },
           { text: 'Providers', link: '/providers' },
           { text: 'Headless output', link: '/headless' },
           { text: 'Editor integration (ACP)', link: '/acp' },

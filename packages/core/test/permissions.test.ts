@@ -3,7 +3,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decide, type PermissionMode } from '../src/permissions/engine.ts';
 import { matchesCommand, parseRule, type Rule, RuleSyntaxError } from '../src/permissions/rules.ts';
-import { loadSettings, persistRule } from '../src/permissions/settings.ts';
+import {
+  loadSettings,
+  persistDefaultModel,
+  persistReasoningEffort,
+  persistRule,
+} from '../src/permissions/settings.ts';
 import { bashTool } from '../src/tools/bash.ts';
 import { readTool } from '../src/tools/read.ts';
 import type { PermissionRequest } from '../src/tools/types.ts';
@@ -209,6 +214,19 @@ describe('settings files', () => {
 });
 
 describe('preferences in settings', () => {
+  test('persists project model and per-model reasoning without losing other settings', () =>
+    withTempDir(async (dir) => {
+      await mkdir(join(dir, '.earshot'), { recursive: true });
+      await writeFile(join(dir, '.earshot/settings.json'), JSON.stringify({ curiosity: 'high' }));
+      await persistDefaultModel('openai/gpt-5', 'project', dir);
+      await persistReasoningEffort('openai/gpt-5', 'medium', 'project', dir);
+
+      const loaded = await loadSettings(dir);
+      expect(loaded.defaultModel).toBe('openai/gpt-5');
+      expect(loaded.reasoningEfforts['openai/gpt-5']).toBe('medium');
+      expect(loaded.curiosity).toBe('high');
+    }));
+
   test('reads curiosity and maxCostUsd, narrowest scope winning', () =>
     withTempDir(async (dir) => {
       await mkdir(join(dir, '.earshot'), { recursive: true });

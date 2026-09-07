@@ -8,6 +8,7 @@ import {
   ShellNotFoundError,
   UnknownModelError,
 } from '@earshot/core';
+import type { ReasoningEffort } from '@earshot/providers';
 import type { ParsedArgs } from '../args.ts';
 import { parseCuriosity, parseMaxCost } from '../budget.ts';
 import { startExtensions } from '../extensions/index.ts';
@@ -19,8 +20,6 @@ import {
   SCHEMA,
   toStreamRecord,
 } from '../output.ts';
-
-const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
 /**
  * `earshot -p "<prompt>"` - one non-interactive turn, with tools.
@@ -67,6 +66,11 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
     process.stderr.write(`"${flags['max-cost']}" is not an amount in dollars\n`);
     return 2;
   }
+  const reasoningEffort = parseReasoningEffort(flags['reasoning-effort']);
+  if (reasoningEffort === 'invalid') {
+    process.stderr.write(`"${flags['reasoning-effort']}" is not a reasoning effort\n`);
+    return 2;
+  }
 
   const extensions = await startExtensions(process.cwd());
 
@@ -77,7 +81,8 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
       extraTools: extensions.tools,
       problems: extensions.problems,
       onDispose: () => extensions.close(),
-      model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
+      ...(typeof flags.model === 'string' ? { model: flags.model } : {}),
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
       ...(mode ? { mode } : {}),
       ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
       ...(curiosity ? { curiosity } : {}),
@@ -165,7 +170,7 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
     costUsd: session.agent.costUsd,
     durationMs: Date.now() - startedAt,
     numMessages: session.agent.history.length,
-    model: typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL,
+    model: `${session.agent.model.provider.id}/${session.agent.model.model.id}`,
     permissionMode: session.agent.permissionMode,
     ...(session.store ? { sessionId: session.store.id } : {}),
     ...(failure ? { error: failure } : {}),
@@ -175,6 +180,17 @@ export async function headlessCommand(prompt: string, args: ParsedArgs): Promise
   );
 
   return exitCode;
+}
+
+function parseReasoningEffort(
+  value: string | boolean | undefined,
+): ReasoningEffort | null | 'invalid' | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'auto') return null;
+  if (typeof value !== 'string') return 'invalid';
+  return ['none', 'low', 'medium', 'high', 'xhigh'].includes(value)
+    ? (value as ReasoningEffort)
+    : 'invalid';
 }
 
 function resumeFrom(flags: ParsedArgs['flags']) {

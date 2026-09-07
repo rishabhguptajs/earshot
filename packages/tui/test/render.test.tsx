@@ -398,7 +398,7 @@ describe('the slash-command menu', () => {
       stdin.send('\r');
       // Not the model name: that is already in the status line, and asserting
       // on it would pass whether or not the second row ever ran.
-      await waitFor(stdout, '/model <provider/model> switches');
+      await waitFor(stdout, 'model picker is unavailable');
     });
   });
 
@@ -524,10 +524,10 @@ describe('the slash-command menu', () => {
     });
   });
 
-  test('/model with no argument names the model in use', async () => {
+  test('/model with no argument opens the picker when model options are available', async () => {
     await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
       await type(stdin, '/model');
-      await waitFor(stdout, '/model <provider/model> switches');
+      await waitFor(stdout, 'model picker is unavailable');
     });
   });
 
@@ -535,8 +535,16 @@ describe('the slash-command menu', () => {
     await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
       await type(stdin, '/model nonsense/nope');
       await waitFor(stdout, 'unknown model');
-      await type(stdin, '/model');
-      await waitFor(stdout, '/model <provider/model> switches');
+      expect(stdout.output).toContain('test/scripted');
+    });
+  });
+
+  test('/sessions opens the saved-chat picker', async () => {
+    await withApp([{ text: 'ok' }], async ({ stdout, stdin }) => {
+      await type(stdin, '/sessions');
+      await waitFor(stdout, 'saved chats for this project');
+      stdin.send('\x1b');
+      await settle(30);
     });
   });
 

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Message } from '@earshot/providers';
+import type { Message, ReasoningEffort } from '@earshot/providers';
 import { sessionsDir } from '@earshot/providers';
 
 /**
@@ -40,6 +40,14 @@ export type SessionEntry =
       /** Compaction writes a new entry rather than replacing what it summarises. */
       text: string;
       replaces: string[];
+    }
+  | {
+      type: 'configuration';
+      id: string;
+      parentId: string | null;
+      timestamp: string;
+      model?: string;
+      reasoningEffort?: ReasoningEffort | null;
     };
 
 /** An entry as supplied by a caller; the store assigns id, parent and timestamp. */
@@ -52,13 +60,15 @@ export type NewEntry =
       forkedFrom?: { sessionId: string; entryId: string };
     }
   | { type: 'message'; message: Message }
-  | { type: 'summary'; text: string; replaces: string[] };
+  | { type: 'summary'; text: string; replaces: string[] }
+  | { type: 'configuration'; model?: string; reasoningEffort?: ReasoningEffort | null };
 
 export interface SessionInfo {
   id: string;
   path: string;
   cwd: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   updatedAt: number;
   /** First user message, for showing the user which session is which. */
   preview: string;
@@ -271,11 +281,13 @@ export async function listSessions(cwd: string): Promise<SessionInfo[]> {
     const meta = entries.find((entry) => entry.type === 'meta');
     if (!info || meta?.type !== 'meta') continue;
 
+    const configuration = latestConfiguration(entries);
     infos.push({
       id: name.replace(/\.jsonl$/, ''),
       path,
       cwd: meta.cwd,
-      model: meta.model,
+      model: configuration.model ?? meta.model,
+      ...(configuration.reasoningEffort ? { reasoningEffort: configuration.reasoningEffort } : {}),
       updatedAt: info.mtimeMs,
       preview: firstUserText(entries),
     });
@@ -283,6 +295,30 @@ export async function listSessions(cwd: string): Promise<SessionInfo[]> {
   // Tie-broken by id, which encodes creation order, so two sessions written in
   // the same millisecond still resolve to a stable "most recent".
   return infos.sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id));
+}
+
+export function latestConfiguration(entries: readonly SessionEntry[]): {
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  reasoningConfigured: boolean;
+} {
+  const meta = entries.find((entry) => entry.type === 'meta');
+  let model = meta?.type === 'meta' ? meta.model : undefined;
+  let reasoningEffort: ReasoningEffort | undefined;
+  let reasoningConfigured = false;
+  for (const entry of branchTo([...entries])) {
+    if (entry.type !== 'configuration') continue;
+    if (entry.model !== undefined) model = entry.model;
+    if (entry.reasoningEffort !== undefined) {
+      reasoningConfigured = true;
+      reasoningEffort = entry.reasoningEffort === null ? undefined : entry.reasoningEffort;
+    }
+  }
+  return {
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    reasoningConfigured,
+  };
 }
 
 export async function latestSession(cwd: string): Promise<SessionInfo | undefined> {

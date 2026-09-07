@@ -6,14 +6,13 @@ import {
   type PermissionMode,
   UnknownModelError,
 } from '@earshot/core';
+import type { ReasoningEffort } from '@earshot/providers';
 import { runOnboarding, runTui } from '@earshot/tui';
 import type { ParsedArgs } from '../args.ts';
 import { parseCuriosity, parseMaxCost } from '../budget.ts';
 import { startExtensions } from '../extensions/index.ts';
 import { loadImage } from '../image.ts';
 import { buildOnboardingOptions } from '../onboard.ts';
-
-const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 
 /**
  * The default command: the interactive TUI.
@@ -68,11 +67,15 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
   }
 
   const extensions = await startExtensions(process.cwd());
-  let model = typeof flags.model === 'string' ? flags.model : DEFAULT_MODEL;
+  let model = typeof flags.model === 'string' ? flags.model : undefined;
+  let reasoningEffort = parseReasoningEffort(flags['reasoning-effort']);
+  if (reasoningEffort === 'invalid') {
+    process.stderr.write(`"${flags['reasoning-effort']}" is not a reasoning effort\n`);
+    return 2;
+  }
   // `--no-onboarding` is for CI and for anyone who wants the old dead-end back.
   const onboardingAllowed = flags['no-onboarding'] !== true;
 
-  let firstPrompt = initialPrompt;
   let attempted = false;
 
   for (;;) {
@@ -82,7 +85,8 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
         extraTools: extensions.tools,
         problems: extensions.problems,
         onDispose: () => extensions.close(),
-        model,
+        ...(model ? { model } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         ...(mode ? { mode } : {}),
         ...(typeof flags['api-key'] === 'string' ? { apiKey: flags['api-key'] } : {}),
         ...(curiosity ? { curiosity } : {}),
@@ -90,17 +94,29 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
         ...resumeFrom(flags),
       });
 
-      return await runTui({
+      const tui = await runTui({
         session,
-        model,
-        ...(firstPrompt !== '' || image
+        model: `${session.agent.model.provider.id}/${session.agent.model.model.id}`,
+        modelOptions: await buildOnboardingOptions(),
+        ...(initialPrompt !== '' || image
           ? {
               initialPrompt: image
-                ? [...(firstPrompt ? [{ type: 'text' as const, text: firstPrompt }] : []), image]
-                : firstPrompt,
+                ? [
+                    ...(initialPrompt ? [{ type: 'text' as const, text: initialPrompt }] : []),
+                    image,
+                  ]
+                : initialPrompt,
             }
           : {}),
       });
+      if (tui.resumePath) {
+        return interactiveCommand({
+          command: undefined,
+          flags: { ...flags, resume: tui.resumePath, continue: false },
+          positionals: [],
+        });
+      }
+      return tui.exitCode;
     } catch (error) {
       if (error instanceof MissingCredentialsError && onboardingAllowed && !attempted) {
         // Only ever offered once: a second `MissingCredentialsError` after
@@ -115,8 +131,15 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
           await extensions.close();
           return 0;
         }
-        if (result.model) model = result.model;
-        firstPrompt = result.firstPrompt ?? firstPrompt;
+        if (result.model) {
+          model = result.model;
+          reasoningEffort = result.reasoningEffort;
+          await (await buildOnboardingOptions()).remember?.(
+            result.model,
+            result.reasoningEffort,
+            'global',
+          );
+        }
         continue;
       }
       // The session never reached dispose(), so anything already spawned is
@@ -139,6 +162,18 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
       throw error;
     }
   }
+}
+
+function parseReasoningEffort(
+  value: string | boolean | undefined,
+): ReasoningEffort | null | 'invalid' | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return 'invalid';
+  return ['none', 'low', 'medium', 'high', 'xhigh'].includes(value)
+    ? (value as ReasoningEffort)
+    : value === 'auto'
+      ? null
+      : 'invalid';
 }
 
 function resumeFrom(flags: ParsedArgs['flags']) {

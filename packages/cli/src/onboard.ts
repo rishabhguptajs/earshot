@@ -1,4 +1,10 @@
-import { resolveModel, streamModel } from '@earshot/core';
+import {
+  loadSettings,
+  persistDefaultModel,
+  persistReasoningEffort,
+  resolveModel,
+  streamModel,
+} from '@earshot/core';
 import {
   type AuthSpec,
   AuthStore,
@@ -22,6 +28,8 @@ export async function buildOnboardingOptions(
 ): Promise<OnboardingOptions> {
   const registry = buildRegistry();
   const store = new AuthStore();
+  const cwd = process.cwd();
+  const settings = await loadSettings(cwd);
 
   const providers: OnboardingProvider[] = [];
   for (const provider of registry.list()) {
@@ -30,7 +38,11 @@ export async function buildOnboardingOptions(
   }
   // OAuth first: signing in needs nothing typed, which is the easiest way for
   // someone who has never used earshot before to get past this screen.
-  providers.sort((a, b) => Number(b.kind === 'oauth') - Number(a.kind === 'oauth'));
+  providers.sort(
+    (a, b) =>
+      Number(Boolean(b.configured)) - Number(Boolean(a.configured)) ||
+      Number(b.kind === 'oauth') - Number(a.kind === 'oauth'),
+  );
 
   return {
     providers,
@@ -43,6 +55,11 @@ export async function buildOnboardingOptions(
       await store.set(providerId, credentials);
     },
     probe: (providerId, modelId) => probe(registry, providerId, modelId),
+    reasoningFor: (model) => settings.reasoningEfforts[model],
+    remember: async (model, effort, scope) => {
+      await persistDefaultModel(model, scope, cwd);
+      await persistReasoningEffort(model, effort, scope, cwd);
+    },
   };
 }
 
@@ -50,7 +67,11 @@ async function describe(provider: Provider, store: AuthStore): Promise<Onboardin
   const configured = await resolveCredentials(provider, { store }).catch(() => undefined);
   return {
     id: provider.id,
-    models: provider.models().map((model) => ({ id: model.id, name: model.name })),
+    models: provider.models().map((model) => ({
+      id: model.id,
+      name: model.name,
+      reasoning: model.capabilities.reasoning,
+    })),
     kind: provider.auth.kind === 'oauth' ? 'oauth' : 'api-key',
     ...(envVarsOf(provider.auth).length ? { envVars: envVarsOf(provider.auth) } : {}),
     ...(configured ? { configured: describeConfigured(configured.type) } : {}),

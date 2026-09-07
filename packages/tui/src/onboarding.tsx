@@ -1,3 +1,4 @@
+import type { ReasoningEffort } from '@earshot/providers';
 import { Box, Text, useApp, useInput } from 'ink';
 import { useCallback, useRef, useState } from 'react';
 import { TextInput } from './components/text-input.tsx';
@@ -13,8 +14,7 @@ import { theme } from './theme.ts';
  *     points it at the same `AuthStore` `earshot auth login` uses - a second
  *     write path would be a second set of file permissions to get wrong.
  *   - It never renders, logs or returns a key. What the user types is held in a
- *     ref, drawn as bullets, and handed to `store`; `firstPrompt` is the only
- *     text that leaves here.
+ *     ref, drawn as bullets, and handed to `store`.
  *   - It never runs without a TTY. The caller checks, because a headless run
  *     with no credentials must fail fast rather than block on a prompt nobody
  *     can answer.
@@ -38,6 +38,7 @@ export interface OnboardingProvider {
 export interface OnboardingModel {
   readonly id: string;
   readonly name: string;
+  readonly reasoning?: boolean;
 }
 
 /** Why a probe failed, which is the only thing that decides the next screen. */
@@ -61,6 +62,12 @@ export interface OnboardingOptions {
   signIn(providerId: string, onUrl: (url: string) => void): Promise<void>;
   /** One minimal live call. The only thing that proves a credential works. */
   probe(providerId: string, modelId: string): Promise<ProbeResult>;
+  reasoningFor?(model: string): ReasoningEffort | undefined;
+  remember?(
+    model: string,
+    effort: ReasoningEffort | undefined,
+    scope: 'global' | 'project',
+  ): Promise<void>;
 }
 
 export interface OnboardingResult {
@@ -68,8 +75,8 @@ export interface OnboardingResult {
   outcome: 'ready' | 'quit';
   providerId?: string;
   model?: string;
-  /** What the user typed on the last screen, run as the first turn. */
-  firstPrompt?: string;
+  reasoningEffort?: ReasoningEffort;
+  scope?: 'global' | 'project';
 }
 
 type Screen =
@@ -78,19 +85,28 @@ type Screen =
   | { name: 'key'; provider: OnboardingProvider; model: OnboardingModel }
   | { name: 'oauth'; provider: OnboardingProvider; model: OnboardingModel; url?: string }
   | { name: 'probing'; provider: OnboardingProvider; model: OnboardingModel }
+  | { name: 'effort'; provider: OnboardingProvider; model: OnboardingModel }
   | {
       name: 'failed';
       provider: OnboardingProvider;
       model: OnboardingModel;
       result: Extract<ProbeResult, { ok: false }>;
-    }
-  | { name: 'ready'; provider: OnboardingProvider; model: OnboardingModel };
+    };
 
 export interface OnboardingProps extends OnboardingOptions {
   onDone: (result: OnboardingResult) => void;
+  embedded?: boolean;
+  defaultScope?: 'global' | 'project';
 }
 
-export function Onboarding({ onDone, ...rest }: OnboardingProps) {
+const EFFORTS = ['auto', 'none', 'low', 'medium', 'high', 'xhigh'] as const;
+
+export function Onboarding({
+  onDone,
+  embedded = false,
+  defaultScope = 'global',
+  ...rest
+}: OnboardingProps) {
   const { exit } = useApp();
   // The props object is rebuilt every render (it is a spread), so the
   // callbacks it carries would otherwise force every effect that uses them to
@@ -117,23 +133,54 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
   const finish = useCallback(
     (result: OnboardingResult) => {
       onDone(result);
-      exit();
+      if (!embedded) exit();
     },
-    [exit, onDone],
+    [embedded, exit, onDone],
   );
 
-  const verify = useCallback(async (provider: OnboardingProvider, model: OnboardingModel) => {
-    setScreen({ name: 'probing', provider, model });
-    const result = await options.current.probe(provider.id, model.id);
-    if (result.ok) {
-      setScreen({ name: 'ready', provider, model });
-      return;
-    }
-    // A key the provider refused is worse than no key: it fails again on every
-    // future launch, from a file the user has no reason to look in.
-    if (result.reason === 'rejected') await options.current.forgetKey(provider.id).catch(() => {});
-    setScreen({ name: 'failed', provider, model, result });
-  }, []);
+  const complete = useCallback(
+    (
+      provider: OnboardingProvider,
+      model: OnboardingModel,
+      scope = defaultScope,
+      effort?: ReasoningEffort,
+    ) =>
+      finish({
+        outcome: 'ready',
+        providerId: provider.id,
+        model: `${provider.id}/${model.id}`,
+        scope,
+        ...(effort ? { reasoningEffort: effort } : {}),
+      }),
+    [defaultScope, finish],
+  );
+
+  const readyForEffort = useCallback(
+    (provider: OnboardingProvider, model: OnboardingModel) => {
+      const remembered = options.current.reasoningFor?.(`${provider.id}/${model.id}`);
+      setCursor(remembered ? Math.max(0, EFFORTS.indexOf(remembered)) : 0);
+      if (model.reasoning) setScreen({ name: 'effort', provider, model });
+      else complete(provider, model);
+    },
+    [complete],
+  );
+
+  const verify = useCallback(
+    async (provider: OnboardingProvider, model: OnboardingModel) => {
+      setScreen({ name: 'probing', provider, model });
+      const result = await options.current.probe(provider.id, model.id);
+      if (result.ok) {
+        readyForEffort(provider, model);
+        return;
+      }
+      // A key the provider refused is worse than no key: it fails again on every
+      // future launch, from a file the user has no reason to look in.
+      if (result.reason === 'rejected')
+        await options.current.forgetKey(provider.id).catch(() => {});
+      setScreen({ name: 'failed', provider, model, result });
+    },
+    [readyForEffort],
+  );
 
   const submitKey = useCallback(async () => {
     const selected = screen.name === 'key' ? screen : undefined;
@@ -175,11 +222,11 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
     (provider: OnboardingProvider, model: OnboardingModel) => {
       setInput('');
       setError(undefined);
-      if (provider.configured) void verify(provider, model);
+      if (provider.configured) readyForEffort(provider, model);
       else if (provider.kind === 'oauth') void startSignIn(provider, model);
       else setScreen({ name: 'key', provider, model });
     },
-    [startSignIn, verify],
+    [readyForEffort, startSignIn],
   );
 
   const chooseProvider = useCallback(
@@ -219,8 +266,37 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
         return;
       }
       const matches = matchingModels(screen.provider.models, input);
+      if (embedded && meta.ctrl && key === 'g') {
+        const selected = matches[cursor];
+        if (selected) {
+          if (selected.reasoning) {
+            setCursor(0);
+            setScreen({ name: 'effort', provider: screen.provider, model: selected });
+          } else complete(screen.provider, selected, 'global');
+        }
+        return;
+      }
       if (meta.upArrow) setCursor((c) => (c <= 0 ? Math.max(0, matches.length - 1) : c - 1));
       if (meta.downArrow) setCursor((c) => (c >= matches.length - 1 ? 0 : c + 1));
+      return;
+    }
+    if (screen.name === 'effort') {
+      if (meta.escape) {
+        setCursor(preferredModelIndex(screen.provider.models, rest.wantedModel));
+        setScreen({ name: 'model', provider: screen.provider });
+        return;
+      }
+      if (meta.upArrow) setCursor((c) => (c <= 0 ? EFFORTS.length - 1 : c - 1));
+      if (meta.downArrow) setCursor((c) => (c >= EFFORTS.length - 1 ? 0 : c + 1));
+      const selected = EFFORTS[cursor] ?? 'auto';
+      if (meta.return || (embedded && key === 'g')) {
+        complete(
+          screen.provider,
+          screen.model,
+          embedded && key === 'g' ? 'global' : defaultScope,
+          selected === 'auto' ? undefined : selected,
+        );
+      }
       return;
     }
     if (screen.name === 'key' && !meta.escape) {
@@ -256,14 +332,14 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
     if (screen.name === 'failed' && key === 'k' && screen.result.reason === 'unreachable') {
       // Keeping an unverified key is allowed on purpose: a network that cannot
       // be reached must not be able to lock someone out of their own setup.
-      setScreen({ name: 'ready', provider: screen.provider, model: screen.model });
+      readyForEffort(screen.provider, screen.model);
     }
   });
 
   if (screen.name === 'choose') {
     return (
       <Box flexDirection="column">
-        <Header />
+        <Header embedded={embedded} />
         {providers.map((provider, index) => (
           <Box key={provider.id}>
             <Text color={index === cursor ? theme.user : theme.muted}>
@@ -290,7 +366,7 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
     const start = Math.max(0, Math.min(cursor - 3, matches.length - 8));
     return (
       <Box flexDirection="column">
-        <Header />
+        <Header embedded={embedded} />
         <Text>
           choose a model from {screen.provider.id} ({matches.length} matching)
         </Text>
@@ -330,7 +406,7 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
   if (screen.name === 'key') {
     return (
       <Box flexDirection="column">
-        <Header />
+        <Header embedded={embedded} />
         <Text>paste an api key for {screen.provider.id}</Text>
         <Box marginTop={1}>
           <Text color={theme.muted}>
@@ -357,7 +433,7 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
   if (screen.name === 'oauth') {
     return (
       <Box flexDirection="column">
-        <Header />
+        <Header embedded={embedded} />
         <Text>signing in to {screen.provider.id} in your browser…</Text>
         {screen.url ? (
           <Box marginTop={1} flexDirection="column">
@@ -375,7 +451,7 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
   if (screen.name === 'probing') {
     return (
       <Box flexDirection="column">
-        <Header />
+        <Header embedded={embedded} />
         <Text color={theme.muted}>checking the credentials with {screen.provider.id}…</Text>
       </Box>
     );
@@ -384,7 +460,7 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
   if (screen.name === 'failed') {
     return (
       <Box flexDirection="column">
-        <Header />
+        <Header embedded={embedded} />
         <Text color={theme.warning}>
           {screen.result.reason === 'rejected'
             ? `${screen.provider.id} rejected that credential. It has not been kept.`
@@ -404,37 +480,34 @@ export function Onboarding({ onDone, ...rest }: OnboardingProps) {
     );
   }
 
-  return (
-    <Box flexDirection="column">
-      <Text color={theme.user}>
-        ready: {screen.provider.id}/{screen.model.id}
-      </Text>
-      <Box marginTop={1}>
-        <Text color={theme.muted}>what should I do? (enter to start with nothing)</Text>
+  if (screen.name === 'effort')
+    return (
+      <Box flexDirection="column">
+        <Header embedded={embedded} />
+        <Text>reasoning effort for {screen.model.name}</Text>
+        <Box flexDirection="column" marginTop={1}>
+          {EFFORTS.map((effort, index) => (
+            <Text key={effort} color={index === cursor ? theme.user : theme.muted}>
+              {index === cursor ? '› ' : '  '}
+              {effort}
+            </Text>
+          ))}
+        </Box>
+        <Text color={theme.muted}>
+          ↑↓ choose · enter use{embedded ? ' here · g use everywhere' : ''} · esc back
+        </Text>
       </Box>
-      <Box>
-        <Text color={theme.user}>{'> '}</Text>
-        <TextInput
-          value={input}
-          onChange={setInput}
-          onSubmit={(text) =>
-            finish({
-              outcome: 'ready',
-              providerId: screen.provider.id,
-              model: `${screen.provider.id}/${screen.model.id}`,
-              firstPrompt: text.trim(),
-            })
-          }
-        />
-      </Box>
-    </Box>
-  );
+    );
+
+  return null;
 }
 
-function Header() {
+function Header({ embedded }: { embedded: boolean }) {
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text>earshot needs a model provider before it can do anything.</Text>
+      <Text>
+        {embedded ? 'switch model' : 'earshot needs a model provider before it can do anything.'}
+      </Text>
     </Box>
   );
 }

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Message } from '@earshot/providers';
 import {
   branchTo,
+  latestConfiguration,
   latestSession,
   listSessions,
   messagesOf,
@@ -31,6 +32,27 @@ async function inDataDir<T>(fn: (cwd: string) => Promise<T>): Promise<T> {
 const meta = { model: 'test/scripted', version: '0.0.1' };
 
 describe('the transcript', () => {
+  test('model and reasoning changes are append-only and latest wins', async () => {
+    await inDataDir(async (cwd) => {
+      const store = await SessionStore.create(cwd, meta);
+      await store.append({ type: 'configuration', model: 'test/other', reasoningEffort: 'high' });
+      await store.append({ type: 'configuration', reasoningEffort: null });
+      await store.flush();
+
+      const entries = await readEntries(store.path);
+      expect(entries.map((entry) => entry.type)).toEqual([
+        'meta',
+        'configuration',
+        'configuration',
+      ]);
+      expect(latestConfiguration(entries)).toEqual({
+        model: 'test/other',
+        reasoningConfigured: true,
+      });
+      expect((await listSessions(cwd))[0]?.model).toBe('test/other');
+    });
+  });
+
   test('every entry is one line of JSON, in write order', async () => {
     await inDataDir(async (cwd) => {
       const store = await SessionStore.create(cwd, meta);

@@ -4,6 +4,7 @@
 
 ```
 earshot [flags]                   start the interactive TUI
+earshot sessions                  browse chats saved for this directory
 earshot -p "<prompt>" [flags]     one headless turn
 earshot models [filter] [flags]   list the model catalog
 earshot auth <login|list|logout>  manage credentials
@@ -21,9 +22,18 @@ earshot update [--check]          update earshot to the latest release
 | `--version`, `-v` | Print the version and exit |
 | `--help`, `-h` | Print help and exit |
 | `--model <ref>` | Model for this run, as `provider/model` or a bare model id |
+| `--reasoning-effort <level>` | `auto`, `none`, `low`, `medium`, `high`, or `xhigh` |
+| `--continue` | Resume the latest chat in this directory |
+| `--resume <path>` | Resume an exact JSONL transcript |
 | `--no-onboarding` | Skip first-run onboarding; missing credentials exit 3 like before |
 
 ## `earshot -p`
+
+Plain `earshot` creates a new chat. `earshot sessions` or `/sessions` opens a searchable list
+for the current directory; `--continue` resumes the latest. In the TUI,
+`/model` and `/reasoning` open pickers, while arguments provide a fast path.
+Selections are remembered per project. `/thinking hide` hides streamed
+reasoning and `/thinking show` restores it.
 
 Runs a single non-interactive turn and prints the response.
 
@@ -239,6 +249,8 @@ Typed at the prompt during an interactive session.
 |---|---|
 | `/help` | List the commands you can type |
 | `/model [ref]` | Show the model in use, or switch to another for the rest of the session |
+| `/reasoning [auto\|none\|low\|medium\|high\|xhigh]` | Show or change reasoning effort for the current model |
+| `/thinking [show\|hide]` | Show or hide streamed model reasoning |
 | `/mode <plan\|ask\|accept-edits\|auto\|yolo>` | Change the permission mode |
 | `/plan <task>` | Draft a plan in plan mode and write it to a file |
 | `/plan edit` | Open the plan in `$VISUAL`/`$EDITOR`, or print its path |
@@ -255,6 +267,7 @@ Typed at the prompt during an interactive session.
 | `/memory` | List remembered preferences, each with the sentence it came from |
 | `/memory forget <id>` | Delete one remembered preference |
 | `/tree` | List this session's prompts, numbered |
+| `/sessions` | Browse and resume chats saved for this project |
 | `/rewind <n>` | Go back to the state before prompt `n`; nothing is deleted |
 | `/fork <n>` | Branch from prompt `n` into a new transcript |
 | `/undo` | Revert the last tool batch's file changes; again to step back further |

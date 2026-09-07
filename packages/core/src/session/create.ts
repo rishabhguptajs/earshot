@@ -1,9 +1,9 @@
-import { buildRegistry, type ProviderRegistry } from '@earshot/providers';
+import { buildRegistry, type ProviderRegistry, type ReasoningEffort } from '@earshot/providers';
 import { Agent, type AgentOptions } from '../agent.ts';
 import { buildSystemPrompt, type Curiosity } from '../context/system-prompt.ts';
 import { loadHooks } from '../hooks/config.ts';
 import { HookRunner } from '../hooks/runner.ts';
-import { resolveModel } from '../model.ts';
+import { DEFAULT_MODEL, resolveModel } from '../model.ts';
 import type { PermissionMode, PermissionPrompt } from '../permissions/engine.ts';
 import { loadSettings } from '../permissions/settings.ts';
 import {
@@ -20,6 +20,7 @@ import { VERSION } from '../version.ts';
 import { repairMessage, unresolvedToolCalls } from './repair.ts';
 import {
   branchTo,
+  latestConfiguration,
   latestSession,
   messagesOf,
   readEntries,
@@ -30,7 +31,9 @@ import {
 export interface CreateSessionOptions {
   cwd: string;
   /** Model reference; falls back to the configured default. */
-  model: string;
+  model?: string;
+  /** `null` explicitly selects provider-default (Auto). */
+  reasoningEffort?: ReasoningEffort | null;
   mode?: PermissionMode;
   apiKey?: string;
   registry?: ProviderRegistry;
@@ -87,6 +90,11 @@ export interface CreatedSession {
   rewindTo(entryId: string): Promise<number>;
   /** Continues in a new transcript that records where it branched from. */
   fork(entryId?: string): Promise<string | undefined>;
+  /** Records model/reasoning changes without rewriting transcript history. */
+  recordConfiguration(configuration: {
+    model?: string;
+    reasoningEffort?: ReasoningEffort | null;
+  }): Promise<void>;
   /**
    * Reverts the most recent tool batch's file changes. Calling it again steps
    * back another batch; a file the batch created is reported rather than
@@ -112,6 +120,17 @@ export class NoSessionToResumeError extends Error {
 export async function createSession(options: CreateSessionOptions): Promise<CreatedSession> {
   const registry = options.registry ?? buildRegistry();
   const settings = await loadSettings(options.cwd);
+  const resumePath = options.ephemeral ? undefined : await resolveResumePath(options);
+  const resumeEntries = resumePath ? await readEntries(resumePath) : [];
+  const resumedConfiguration = latestConfiguration(resumeEntries);
+  const requestedModel =
+    options.model ?? resumedConfiguration.model ?? settings.defaultModel ?? DEFAULT_MODEL;
+  const configuredEffort =
+    options.reasoningEffort !== undefined
+      ? options.reasoningEffort
+      : resumedConfiguration.reasoningConfigured
+        ? resumedConfiguration.reasoningEffort
+        : settings.reasoningEfforts[requestedModel];
   const mode = options.mode ?? settings.defaultMode ?? 'ask';
   const curiosity = options.curiosity ?? settings.curiosity ?? 'normal';
   // A flag of zero or less is how the CLI says "no budget", which has to beat a
@@ -123,10 +142,13 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
         : undefined
       : settings.maxCostUsd;
 
-  const resolved = await resolveModel(registry, options.model, {
+  const resolved = await resolveModel(registry, requestedModel, {
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
   });
   const modelRef = `${resolved.provider.id}/${resolved.model.id}`;
+  const reasoningEffort = resolved.model.capabilities.reasoning
+    ? (configuredEffort ?? undefined)
+    : undefined;
 
   const discovered = options.noExtensions
     ? { skills: [], commands: [], problems: [] }
@@ -137,9 +159,8 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   const repairProblems: string[] = [];
 
   if (!options.ephemeral) {
-    const resumePath = await resolveResumePath(options);
     if (resumePath) {
-      const entries = await readEntries(resumePath);
+      const entries = resumeEntries;
       // Only the branch the transcript actually ends on: a session that was
       // rewound has entries that are no longer part of its history.
       replayed = messagesOf(branchTo(entries));
@@ -209,6 +230,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   const agentOptions: AgentOptions = {
     registry,
     model: resolved,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     cwd: options.cwd,
     system,
     mode,
@@ -284,7 +306,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
       const from = entryId ?? store.tailId;
       const entries = await readEntries(store.path);
       const forked = await SessionStore.create(options.cwd, {
-        model: modelRef,
+        model: `${agent.model.provider.id}/${agent.model.model.id}`,
         version: VERSION,
         ...(from ? { forkedFrom: { sessionId: store.id, entryId: from } } : {}),
       }).catch(() => undefined);
@@ -295,9 +317,17 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
       // soon as the file it points at is deleted.
       const kept = messagesOf(branchTo(entries, from ?? undefined));
       for (const message of kept) await forked.appendMessage(message);
+      await forked.append({
+        type: 'configuration',
+        model: `${agent.model.provider.id}/${agent.model.model.id}`,
+        reasoningEffort: agent.reasoningEffort ?? null,
+      });
       agent.replaceHistory(kept);
       store = forked;
       return forked.id;
+    },
+    async recordConfiguration(configuration) {
+      await store?.append({ type: 'configuration', ...configuration });
     },
     async undo() {
       if (!shadow) return undefined;

@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { configDir } from '@earshot/providers';
+import { configDir, isReasoningEffort, type ReasoningEffort } from '@earshot/providers';
 import { type Curiosity, isCuriosity } from '../context/system-prompt.ts';
 import { isPermissionMode, type PermissionMode } from './engine.ts';
 import { parseRule, type Rule, type RuleScope, RuleSyntaxError } from './rules.ts';
@@ -15,6 +15,8 @@ export interface SettingsFile {
   curiosity?: string;
   /** Session budget in USD. A turn stops and asks before spending past it. */
   maxCostUsd?: number;
+  defaultModel?: string;
+  reasoningEfforts?: Record<string, string>;
 }
 
 export interface LoadedSettings {
@@ -24,6 +26,8 @@ export interface LoadedSettings {
   /** Preferences, like `defaultMode`: the narrowest scope that sets one wins. */
   curiosity?: Curiosity;
   maxCostUsd?: number;
+  defaultModel?: string;
+  reasoningEfforts: Record<string, ReasoningEffort>;
   /** Rules that failed to parse, reported rather than silently dropped. */
   problems: string[];
 }
@@ -63,6 +67,8 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
   let defaultMode: PermissionMode | undefined;
   let curiosity: Curiosity | undefined;
   let maxCostUsd: number | undefined;
+  let defaultModel: string | undefined;
+  const reasoningEfforts: Record<string, ReasoningEffort> = {};
 
   for (const scope of scopes) {
     const path = settingsPath(scope, cwd);
@@ -71,6 +77,14 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
       return undefined;
     });
     if (!file) continue;
+
+    if (typeof file.defaultModel === 'string' && file.defaultModel.trim() !== '') {
+      defaultModel = file.defaultModel.trim();
+    }
+    for (const [model, effort] of Object.entries(file.reasoningEfforts ?? {})) {
+      if (isReasoningEffort(effort)) reasoningEfforts[model] = effort;
+      else problems.push(`${path}: reasoning effort for "${model}" is invalid`);
+    }
 
     if (file.curiosity !== undefined) {
       if (isCuriosity(file.curiosity)) curiosity = file.curiosity;
@@ -123,8 +137,42 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
     ...(defaultMode ? { defaultMode } : {}),
     ...(curiosity ? { curiosity } : {}),
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+    ...(defaultModel ? { defaultModel } : {}),
+    reasoningEfforts,
     problems,
   };
+}
+
+export async function persistDefaultModel(
+  model: string,
+  scope: Extract<RuleScope, 'global' | 'project' | 'local'>,
+  cwd: string,
+): Promise<string> {
+  const path = settingsPath(scope, cwd);
+  const existing = (await readSettings(path).catch(() => undefined)) ?? {};
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    `${JSON.stringify({ ...existing, defaultModel: model }, null, 2)}\n`,
+    'utf8',
+  );
+  return path;
+}
+
+export async function persistReasoningEffort(
+  model: string,
+  effort: ReasoningEffort | undefined,
+  scope: Extract<RuleScope, 'global' | 'project' | 'local'>,
+  cwd: string,
+): Promise<string> {
+  const path = settingsPath(scope, cwd);
+  const existing = (await readSettings(path).catch(() => undefined)) ?? {};
+  const reasoningEfforts = { ...(existing.reasoningEfforts ?? {}) };
+  if (effort === undefined) delete reasoningEfforts[model];
+  else reasoningEfforts[model] = effort;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify({ ...existing, reasoningEfforts }, null, 2)}\n`, 'utf8');
+  return path;
 }
 
 /**

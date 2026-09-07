@@ -57,6 +57,16 @@ const SPECS = [
     summary: 'Show the model in use, or switch to another for the rest of the session',
   },
   {
+    name: 'reasoning',
+    args: '[auto|none|low|medium|high|xhigh]',
+    summary: 'Show or change reasoning effort for the current model',
+  },
+  {
+    name: 'thinking',
+    args: '[show|hide]',
+    summary: 'Show or hide streamed model reasoning',
+  },
+  {
     name: 'mode',
     args: '<plan|ask|accept-edits|auto|yolo>',
     summary: 'Change the permission mode',
@@ -112,6 +122,11 @@ const SPECS = [
   {
     name: 'tree',
     summary: "List this session's prompts, numbered",
+    idleOnly: true,
+  },
+  {
+    name: 'sessions',
+    summary: 'Browse and resume chats saved for this project',
     idleOnly: true,
   },
   {
