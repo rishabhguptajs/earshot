@@ -9,6 +9,14 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 Nothing queued yet.
 
+## [0.4.2] - 2026-09-08
+
+### Fixed
+
+- Made install-path URL conversion depend on the described target platform
+  rather than the host running detection, and stabilized onboarding input tests
+  on slower Windows runners.
+
 ## [0.4.1] - 2026-09-08
 
 ### Fixed

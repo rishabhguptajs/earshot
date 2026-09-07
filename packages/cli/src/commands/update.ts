@@ -4,7 +4,6 @@ import { existsSync, realpathSync } from 'node:fs';
 import { chmod, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { fileURLToPath } from 'node:url';
 import { VERSION } from '@earshot/core';
 import type { ParsedArgs } from '../args.ts';
 
@@ -73,9 +72,12 @@ export interface DetectOptions {
   isProjectRoot?: (dir: string) => boolean;
 }
 
-function modulePath(moduleUrl: string): string {
+function modulePath(moduleUrl: string, platform: NodeJS.Platform): string {
   try {
-    return fileURLToPath(moduleUrl);
+    const parsed = new URL(moduleUrl);
+    let path = decodeURIComponent(parsed.pathname);
+    if (platform === 'win32' && /^\/[a-z]:\//i.test(path)) path = path.slice(1);
+    return path;
   } catch {
     // A `$bunfs` URL is not a real file URL on every platform; the marker test
     // below only needs the raw string.
@@ -102,7 +104,7 @@ function managerOf(dir: string): Manager {
 export function detectInstall(options: DetectOptions): Install {
   const { execPath, moduleUrl, bunVersion, platform, arch } = options;
   const realpath = options.realpath ?? ((path: string) => path);
-  const file = modulePath(moduleUrl);
+  const file = modulePath(moduleUrl, platform);
   // Detection is intentionally pure: classify the path described by the
   // fixture/runtime, not the OS currently executing this function. Normalising
   // both separators also handles file URLs captured on another platform.

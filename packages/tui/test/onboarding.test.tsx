@@ -70,8 +70,9 @@ async function type(stdin: FakeStdin, text: string): Promise<void> {
 
 async function selectFirstModel(stdout: FakeStdout, stdin: FakeStdin): Promise<void> {
   await waitFor(stdout, 'choose a model from');
+  await settle(100);
   stdin.send('\r');
-  await settle(30);
+  await settle(100);
 }
 
 interface Fixture extends Partial<OnboardingOptions> {
