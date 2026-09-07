@@ -6,3 +6,5 @@ docs/.vitepress/cache/
 *.tsbuildinfo
 .earshot/settings.local.json
 .DS_Store
+*.blend
+*.blend[0-9]*
