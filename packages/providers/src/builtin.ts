@@ -1,4 +1,5 @@
 import { ModelCatalog, SUPPORTED_PROVIDERS, type SupportedProvider } from './catalog/index.ts';
+import { type PoolOptions, poolProvider } from './pool/provider.ts';
 import { ProviderRegistry } from './registry.ts';
 import type { AuthSpec, Model, Provider, WireContext } from './types.ts';
 import { ALL_WIRES } from './wire/adapters.ts';
@@ -128,6 +129,8 @@ export function ollamaProvider(
 export interface BuildRegistryOptions {
   catalog?: ModelCatalog;
   custom?: CustomProviderConfig[];
+  /** Ranking and privacy preferences for the `free` pseudo-provider. */
+  pool?: PoolOptions;
 }
 
 /** The registry earshot boots with: every built-in provider and every wire adapter. */
@@ -139,6 +142,10 @@ export function buildRegistry(opts: BuildRegistryOptions = {}): ProviderRegistry
   for (const entry of SUPPORTED_PROVIDERS) registry.register(buildProvider(entry, catalog));
   registry.register(ollamaProvider());
   for (const config of opts.custom ?? []) registry.register(customProvider(config));
+
+  // Last, because the pool's models are copies of the best concrete candidate
+  // for each tier - including any custom endpoint the user just added.
+  registry.register(poolProvider(registry, opts.pool ?? {}));
 
   return registry;
 }

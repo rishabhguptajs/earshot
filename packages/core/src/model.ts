@@ -1,9 +1,15 @@
 import {
   type Credentials,
+  isPoolTier,
   type Model,
   type ModelRequest,
+  POOL_PROVIDER_ID,
+  type PoolCandidate,
+  type PoolOptions,
+  type PoolTier,
   type Provider,
   type ProviderRegistry,
+  poolCandidates,
   resolveCredentials,
   type StreamEvent,
   type WireContext,
@@ -13,6 +19,13 @@ export interface ResolvedModel {
   provider: Provider;
   model: Model;
   credentials: Credentials;
+  /**
+   * Present when the reference was a `free/*` tier. `provider`, `model` and
+   * `credentials` still name whichever member is serving right now, so
+   * everything that reads a resolved model - the status line, the transcript,
+   * cost - reports what actually ran rather than the pool.
+   */
+  pool?: { tier: PoolTier; candidates: PoolCandidate[] };
 }
 
 export const DEFAULT_MODEL = 'anthropic/claude-opus-5';
@@ -21,6 +34,21 @@ export class MissingCredentialsError extends Error {
   constructor(readonly provider: Provider) {
     super(describeMissingAuth(provider));
     this.name = 'MissingCredentialsError';
+  }
+}
+
+/**
+ * The pool exists but has nothing in it. Distinct from `MissingCredentialsError`,
+ * which is about one provider: here the answer is to connect any free provider
+ * at all, not to fix a particular key.
+ */
+export class EmptyPoolError extends Error {
+  constructor(readonly poolName: string) {
+    super(
+      `no free providers are connected yet - run \`earshot pool setup\` to connect one, ` +
+        'or choose a model with `earshot models`',
+    );
+    this.name = 'EmptyPoolError';
   }
 }
 
@@ -39,8 +67,11 @@ export class UnknownModelError extends Error {
 export async function resolveModel(
   registry: ProviderRegistry,
   ref: string,
-  opts: { apiKey?: string; env?: NodeJS.ProcessEnv } = {},
+  opts: { apiKey?: string; env?: NodeJS.ProcessEnv; pool?: PoolOptions } = {},
 ): Promise<ResolvedModel> {
+  const tier = poolTierOf(ref);
+  if (tier) return resolvePool(registry, tier, opts);
+
   const found = registry.resolveModel(ref) ?? (await discoverModel(registry, ref));
   if (!found) throw new UnknownModelError(ref);
 
@@ -51,6 +82,43 @@ export async function resolveModel(
   if (!credentials) throw new MissingCredentialsError(found.provider);
 
   return { ...found, credentials };
+}
+
+/** `free/best` and friends, but not a real provider called `free` from a config. */
+function poolTierOf(ref: string): PoolTier | undefined {
+  const slash = ref.indexOf('/');
+  if (slash < 0 || ref.slice(0, slash) !== POOL_PROVIDER_ID) return undefined;
+  const tier = ref.slice(slash + 1);
+  return isPoolTier(tier) ? tier : undefined;
+}
+
+/**
+ * Binds a pool tier to whichever member serves it first.
+ *
+ * The whole candidate list is carried along, because the point of the pool is
+ * that the choice is not final: the router walks it when a member turns out to
+ * be exhausted, and quota is only checked when a request is about to be made.
+ */
+async function resolvePool(
+  registry: ProviderRegistry,
+  tier: PoolTier,
+  opts: { env?: NodeJS.ProcessEnv; pool?: PoolOptions },
+): Promise<ResolvedModel> {
+  const candidates = await poolCandidates(registry, tier, {
+    ...(opts.pool ?? {}),
+    ...(opts.env ? { env: opts.env } : {}),
+  });
+  const first = candidates[0];
+  if (!first) {
+    const pool = registry.get(POOL_PROVIDER_ID);
+    throw new EmptyPoolError(pool?.name ?? 'free pool');
+  }
+  return {
+    provider: first.provider,
+    model: first.model,
+    credentials: first.credentials,
+    pool: { tier, candidates },
+  };
 }
 
 /**

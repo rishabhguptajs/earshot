@@ -121,7 +121,12 @@ describe('the free-tier table', () => {
       // Local runtimes publish no catalog, and OpenRouter's free list is
       // resolved live precisely because writing it down does not survive.
       if (LOCAL_TIERS.has(tier.providerId) || tier.live) continue;
-      const available = new Set(registry.get(tier.providerId)?.models().map((m) => m.id) ?? []);
+      const available = new Set(
+        registry
+          .get(tier.providerId)
+          ?.models()
+          .map((m) => m.id) ?? [],
+      );
       for (const model of tier.models) {
         if (!available.has(model.id)) stale.push(`${tier.providerId}/${model.id}`);
       }
