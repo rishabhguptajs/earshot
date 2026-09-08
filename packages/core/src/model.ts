@@ -14,6 +14,7 @@ import {
   type StreamEvent,
   type WireContext,
 } from '@earshot/providers';
+import { type RouterOptions, routePooled } from './pool/router.ts';
 
 export interface ResolvedModel {
   provider: Provider;
@@ -168,10 +169,43 @@ function describeMissingAuth(provider: Provider): string {
   return `no credentials for ${provider.name}: ${how}`;
 }
 
-/** Opens a stream for one model call. Transforms run here, in declared order. */
+/**
+ * Opens a stream for one model call. Transforms run here, in declared order.
+ *
+ * This is the only place a provider stream is opened - the agent loop,
+ * subagents and the onboarding probe all come through here - which is why the
+ * pool router wraps it rather than living in the loop.
+ */
 export function streamModel(
   registry: ProviderRegistry,
   resolved: ResolvedModel,
+  request: Omit<ModelRequest, 'modelId'>,
+  opts: RouterOptions = {},
+): AsyncIterable<StreamEvent> {
+  if (!resolved.pool) return streamOne(registry, resolved, request);
+
+  return routePooled(
+    {
+      candidates: resolved.pool.candidates,
+      open: (candidate, req) =>
+        streamOne(
+          registry,
+          {
+            provider: candidate.provider,
+            model: candidate.model,
+            credentials: candidate.credentials,
+          },
+          req,
+        ),
+    },
+    request,
+    opts,
+  );
+}
+
+function streamOne(
+  registry: ProviderRegistry,
+  resolved: Omit<ResolvedModel, 'pool'>,
   request: Omit<ModelRequest, 'modelId'>,
 ): AsyncIterable<StreamEvent> {
   const { provider, model, credentials } = resolved;

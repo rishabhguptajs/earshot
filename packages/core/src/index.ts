@@ -5,6 +5,7 @@ export * from './memory/index.ts';
 export * from './model.ts';
 export * from './permissions/index.ts';
 export * from './plan/index.ts';
+export * from './pool/index.ts';
 export * from './scope/index.ts';
 export * from './session/index.ts';
 export * from './skills/index.ts';
