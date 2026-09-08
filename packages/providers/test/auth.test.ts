@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AuthStore, resolveCredentials } from '../src/auth.ts';
+import { AuthStore, DEFAULT_ACCOUNT, resolveCredentials } from '../src/auth.ts';
 import type { Provider } from '../src/types.ts';
 
 const anthropic: Provider = {
@@ -92,5 +92,108 @@ describe('resolveCredentials', () => {
     expect((await resolveCredentials(bedrock, { env: {}, store: await tempStore() }))?.type).toBe(
       'ambient',
     );
+  });
+});
+
+/**
+ * Free tiers meter per account, not per key, so pooling capacity means holding
+ * several named credentials for one provider. The v1 shape - one `Credentials`
+ * per provider - is on users' disks right now and has to keep working, and a
+ * user who never adds a second account should never have their file rewritten
+ * into a shape an older earshot cannot read.
+ */
+describe('AuthStore: named accounts', () => {
+  async function tempPath() {
+    return join(await mkdtemp(join(tmpdir(), 'earshot-auth-')), 'auth.json');
+  }
+
+  test('reads a v1 file as a single default account', async () => {
+    const path = await tempPath();
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, providers: { groq: { type: 'api-key', apiKey: 'gsk_one' } } }),
+    );
+    const store = new AuthStore(path);
+
+    expect((await store.get('groq'))?.apiKey).toBe('gsk_one');
+    const accounts = await store.listAccounts('groq');
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.account).toBe(DEFAULT_ACCOUNT);
+    expect(accounts[0]?.apiKey).toBe('gsk_one');
+  });
+
+  test('a lone default account is still written in the v1 shape', async () => {
+    const path = await tempPath();
+    await new AuthStore(path).set('groq', { type: 'api-key', apiKey: 'gsk_one' });
+
+    const raw = JSON.parse(await readFile(path, 'utf8')) as {
+      version: number;
+      providers: Record<string, unknown>;
+    };
+    expect(raw.version).toBe(1);
+    expect(raw.providers.groq).toEqual({ type: 'api-key', apiKey: 'gsk_one' });
+  });
+
+  test('a second account upgrades the file and both survive a reload', async () => {
+    const path = await tempPath();
+    const store = new AuthStore(path);
+    await store.set('groq', { type: 'api-key', apiKey: 'gsk_one' });
+    await store.setAccount('groq', 'work', { type: 'api-key', apiKey: 'gsk_two' });
+
+    const raw = JSON.parse(await readFile(path, 'utf8')) as { version: number };
+    expect(raw.version).toBe(2);
+
+    const reopened = new AuthStore(path);
+    expect((await reopened.listAccounts('groq')).map((one) => one.account)).toEqual([
+      DEFAULT_ACCOUNT,
+      'work',
+    ]);
+    // A bare provider id keeps meaning the default account, so nothing that
+    // predates the pool changes behaviour.
+    expect((await reopened.get('groq'))?.apiKey).toBe('gsk_one');
+  });
+
+  test('setAccount replaces rather than duplicating a name', async () => {
+    const path = await tempPath();
+    const store = new AuthStore(path);
+    await store.setAccount('groq', 'work', { type: 'api-key', apiKey: 'first' });
+    await store.setAccount('groq', 'work', { type: 'api-key', apiKey: 'second' });
+
+    const accounts = await store.listAccounts('groq');
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.apiKey).toBe('second');
+  });
+
+  test('removing back down to a lone default restores the v1 shape', async () => {
+    const path = await tempPath();
+    const store = new AuthStore(path);
+    await store.set('groq', { type: 'api-key', apiKey: 'gsk_one' });
+    await store.setAccount('groq', 'work', { type: 'api-key', apiKey: 'gsk_two' });
+    await store.removeAccount('groq', 'work');
+
+    const raw = JSON.parse(await readFile(path, 'utf8')) as { providers: Record<string, unknown> };
+    expect(raw.providers.groq).toEqual({ type: 'api-key', apiKey: 'gsk_one' });
+    expect((await store.get('groq'))?.apiKey).toBe('gsk_one');
+  });
+
+  test('removing the last account drops the provider entirely', async () => {
+    const path = await tempPath();
+    const store = new AuthStore(path);
+    await store.setAccount('groq', 'work', { type: 'api-key', apiKey: 'gsk_two' });
+    await store.removeAccount('groq', 'work');
+
+    expect(await store.get('groq')).toBeUndefined();
+    expect(await store.listAccounts('groq')).toEqual([]);
+    expect(await store.list()).toEqual([]);
+  });
+
+  test('logout still forgets every account for the provider', async () => {
+    const path = await tempPath();
+    const store = new AuthStore(path);
+    await store.set('groq', { type: 'api-key', apiKey: 'one' });
+    await store.setAccount('groq', 'work', { type: 'api-key', apiKey: 'two' });
+    await store.remove('groq');
+
+    expect(await store.listAccounts('groq')).toEqual([]);
   });
 });
