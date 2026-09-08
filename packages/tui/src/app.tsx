@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import type {
   Agent,
   CreatedSession,
@@ -70,6 +71,19 @@ export interface AppProps {
 
 let sequence = 0;
 const nextId = () => `item_${sequence++}`;
+
+/**
+ * Names the settings file a choice was written to.
+ *
+ * Silence here is what made `/model` feel broken: the picker saved into
+ * `./.earshot/settings.json` and said only `model: x`, so the same command run
+ * one directory over came back with the old model and no explanation.
+ */
+function savedTo(path: string | undefined): string {
+  if (!path) return '';
+  const home = homedir();
+  return ` · saved to ${path.startsWith(home) ? `~${path.slice(home.length)}` : path}`;
+}
 
 function promptLabel(prompt: UserPrompt): string {
   if (typeof prompt === 'string') return prompt;
@@ -638,12 +652,12 @@ export function App({
         // The system prompt names the model; leaving the old name in it would
         // tell the new model it is something else.
         await refreshSystemPrompt(agent, next, session.skills);
-        await modelOptions?.remember?.(next, effort, 'project');
+        const saved = await modelOptions?.remember?.(next, effort, 'global');
         await session.recordConfiguration({ model: next, reasoningEffort: effort ?? null });
         push({
           kind: 'notice',
           id: nextId(),
-          text: `model: ${next}${effort ? ` · ${effort}` : ''}`,
+          text: `model: ${next}${effort ? ` · ${effort}` : ''}${savedTo(saved)}`,
         });
       } catch (error) {
         push({
@@ -669,7 +683,11 @@ export function App({
         agent.setReasoningEffort(result.reasoningEffort);
         setModel(next);
         await refreshSystemPrompt(agent, next, session.skills);
-        await modelOptions?.remember?.(next, result.reasoningEffort, result.scope ?? 'project');
+        const saved = await modelOptions?.remember?.(
+          next,
+          result.reasoningEffort,
+          result.scope ?? 'global',
+        );
         await session.recordConfiguration({
           model: next,
           reasoningEffort: result.reasoningEffort ?? null,
@@ -677,7 +695,10 @@ export function App({
         push({
           kind: 'notice',
           id: nextId(),
-          text: `model: ${next}${result.reasoningEffort ? ` · ${result.reasoningEffort}` : ' · auto'}`,
+          text:
+            `model: ${next}` +
+            `${result.reasoningEffort ? ` · ${result.reasoningEffort}` : ' · auto'}` +
+            savedTo(saved),
         });
       } catch (error) {
         push({
@@ -697,39 +718,69 @@ export function App({
     async (argument?: string) => {
       const value = argument?.trim().toLowerCase();
       if (!value) {
-        if (!agent.model.model.capabilities.reasoning) {
+        if (!(modelOptions?.thinkingFor?.(model) ?? agent.model.model.capabilities.reasoning)) {
           push({
             kind: 'notice',
             id: nextId(),
-            text: `${agent.model.model.name} does not support reasoning`,
+            text:
+              `${agent.model.model.name} is not listed as supporting reasoning - ` +
+              '`/reasoning on` forces it anyway',
             color: theme.warning,
           });
         } else setChoosingReasoning(true);
         return;
       }
+      // `on`/`off` override what the catalog claims about the model; the effort
+      // levels say how hard it should think once it is allowed to.
+      if (value === 'on' || value === 'off') {
+        const on = value === 'on';
+        const effort = on ? (modelOptions?.reasoningFor?.(model) ?? 'medium') : undefined;
+        agent.setReasoningEffort(effort);
+        const saved = await modelOptions?.rememberThinking?.(model, on, 'global');
+        await session.recordConfiguration({ reasoningEffort: effort ?? null });
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text:
+            `reasoning: forced ${value} for ${model}` +
+            `${on && effort ? ` · ${effort}` : ''}${savedTo(saved)}`,
+        });
+        return;
+      }
+
       const effort = value === 'auto' ? undefined : (value as ReasoningEffort);
       if (value !== 'auto' && !['none', 'low', 'medium', 'high', 'xhigh'].includes(value)) {
         push({
           kind: 'notice',
           id: nextId(),
-          text: `unknown reasoning effort "${value}"`,
+          text: `unknown reasoning effort "${value}" - use on, off, auto, or a level`,
           color: theme.warning,
         });
         return;
       }
-      if (!agent.model.model.capabilities.reasoning && effort !== undefined) {
+      // The catalog is only the default here. Someone who has already said
+      // `/reasoning on` for this model has overruled it, and saying so again
+      // would be telling them their own setting does not exist.
+      const forced = modelOptions?.thinkingFor?.(model);
+      if (!(forced ?? agent.model.model.capabilities.reasoning) && effort !== undefined) {
         push({
           kind: 'notice',
           id: nextId(),
-          text: `${agent.model.model.name} does not support reasoning`,
+          text:
+            `${agent.model.model.name} is not listed as supporting reasoning - ` +
+            '`/reasoning on` forces it anyway',
           color: theme.warning,
         });
         return;
       }
       agent.setReasoningEffort(effort);
-      await modelOptions?.remember?.(model, effort, 'project');
+      const saved = await modelOptions?.remember?.(model, effort, 'global');
       await session.recordConfiguration({ reasoningEffort: effort ?? null });
-      push({ kind: 'notice', id: nextId(), text: `reasoning: ${effort ?? 'auto'}` });
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `reasoning: ${effort ?? 'auto'}${savedTo(saved)}`,
+      });
     },
     [agent, model, modelOptions, push, session],
   );
@@ -738,7 +789,7 @@ export function App({
     async (effort: ReasoningEffort | undefined) => {
       setChoosingReasoning(false);
       agent.setReasoningEffort(effort);
-      await modelOptions?.remember?.(model, effort, 'project');
+      await modelOptions?.remember?.(model, effort, 'global');
       await session.recordConfiguration({ reasoningEffort: effort ?? null });
       push({ kind: 'notice', id: nextId(), text: `reasoning: ${effort ?? 'auto'}` });
     },

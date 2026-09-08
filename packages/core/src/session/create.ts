@@ -146,8 +146,12 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
   });
   const modelRef = `${resolved.provider.id}/${resolved.model.id}`;
-  const reasoningEffort = resolved.model.capabilities.reasoning
-    ? (configuredEffort ?? undefined)
+  // A `thinking` override beats the catalog in both directions: `false` sends no
+  // reasoning parameter at all, even to a model the catalog says can reason,
+  // which is the escape hatch when a provider rejects one it is claimed to take.
+  const thinking = settings.thinking[modelRef] ?? resolved.model.capabilities.reasoning;
+  const reasoningEffort = thinking
+    ? (configuredEffort ?? (settings.thinking[modelRef] === true ? 'medium' : undefined))
     : undefined;
 
   const discovered = options.noExtensions

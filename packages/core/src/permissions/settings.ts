@@ -17,6 +17,14 @@ export interface SettingsFile {
   maxCostUsd?: number;
   defaultModel?: string;
   reasoningEfforts?: Record<string, string>;
+  /**
+   * Forces reasoning on or off for a model, overriding what the catalog claims.
+   * The catalog is a snapshot of someone else's data and it goes stale: a model
+   * it thinks reasons may reject the parameter, and one it thinks cannot may
+   * support it perfectly well. Without an override the user has no way out of
+   * either mistake.
+   */
+  thinking?: Record<string, boolean>;
 }
 
 export interface LoadedSettings {
@@ -28,6 +36,7 @@ export interface LoadedSettings {
   maxCostUsd?: number;
   defaultModel?: string;
   reasoningEfforts: Record<string, ReasoningEffort>;
+  thinking: Record<string, boolean>;
   /** Rules that failed to parse, reported rather than silently dropped. */
   problems: string[];
 }
@@ -69,6 +78,7 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
   let maxCostUsd: number | undefined;
   let defaultModel: string | undefined;
   const reasoningEfforts: Record<string, ReasoningEffort> = {};
+  const thinking: Record<string, boolean> = {};
 
   for (const scope of scopes) {
     const path = settingsPath(scope, cwd);
@@ -84,6 +94,10 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
     for (const [model, effort] of Object.entries(file.reasoningEfforts ?? {})) {
       if (isReasoningEffort(effort)) reasoningEfforts[model] = effort;
       else problems.push(`${path}: reasoning effort for "${model}" is invalid`);
+    }
+    for (const [model, on] of Object.entries(file.thinking ?? {})) {
+      if (typeof on === 'boolean') thinking[model] = on;
+      else problems.push(`${path}: thinking for "${model}" must be true or false`);
     }
 
     if (file.curiosity !== undefined) {
@@ -139,6 +153,7 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
     ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
     ...(defaultModel ? { defaultModel } : {}),
     reasoningEfforts,
+    thinking,
     problems,
   };
 }
@@ -180,6 +195,27 @@ export async function persistReasoningEffort(
  * Read-modify-write rather than a rewrite from the in-memory rule set: the file
  * is the user's, and may hold settings this version does not know about.
  */
+/**
+ * Records a thinking override, or clears it back to whatever the catalog says.
+ * Read-modify-write like its neighbours: the file is the user's and may hold
+ * keys this version knows nothing about.
+ */
+export async function persistThinking(
+  model: string,
+  on: boolean | undefined,
+  scope: Extract<RuleScope, 'global' | 'project' | 'local'>,
+  cwd: string,
+): Promise<string> {
+  const path = settingsPath(scope, cwd);
+  const existing = (await readSettings(path).catch(() => undefined)) ?? {};
+  const thinking = { ...(existing.thinking ?? {}) };
+  if (on === undefined) delete thinking[model];
+  else thinking[model] = on;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify({ ...existing, thinking }, null, 2)}\n`, 'utf8');
+  return path;
+}
+
 export async function persistRule(rule: Rule, scope: RuleScope, cwd: string): Promise<string> {
   const path = settingsPath(scope, cwd);
   const existing = (await readSettings(path).catch(() => undefined)) ?? {};

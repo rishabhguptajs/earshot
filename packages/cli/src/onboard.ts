@@ -2,6 +2,7 @@ import {
   loadSettings,
   persistDefaultModel,
   persistReasoningEffort,
+  persistThinking,
   resolveModel,
   streamModel,
 } from '@earshot/core';
@@ -56,9 +57,19 @@ export async function buildOnboardingOptions(
     },
     probe: (providerId, modelId) => probe(registry, providerId, modelId),
     reasoningFor: (model) => settings.reasoningEfforts[model],
+    thinkingFor: (model) => settings.thinking[model],
+    rememberThinking: async (model, on, scope) => {
+      const path = await persistThinking(model, on, scope, cwd);
+      // Kept in step so the next session sees the same answer this one acted on.
+      if (on === false) settings.thinking[model] = false;
+      else if (on === true) settings.thinking[model] = true;
+      else delete settings.thinking[model];
+      return path;
+    },
     remember: async (model, effort, scope) => {
-      await persistDefaultModel(model, scope, cwd);
+      const path = await persistDefaultModel(model, scope, cwd);
       await persistReasoningEffort(model, effort, scope, cwd);
+      return path;
     },
   };
 }

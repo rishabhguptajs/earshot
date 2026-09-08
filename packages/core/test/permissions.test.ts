@@ -8,6 +8,7 @@ import {
   persistDefaultModel,
   persistReasoningEffort,
   persistRule,
+  persistThinking,
 } from '../src/permissions/settings.ts';
 import { bashTool } from '../src/tools/bash.ts';
 import { readTool } from '../src/tools/read.ts';
@@ -225,6 +226,44 @@ describe('preferences in settings', () => {
       expect(loaded.defaultModel).toBe('openai/gpt-5');
       expect(loaded.reasoningEfforts['openai/gpt-5']).toBe('medium');
       expect(loaded.curiosity).toBe('high');
+    }));
+
+  /**
+   * The catalog is a vendored snapshot of someone else's data, and it goes
+   * stale in both directions: it lists models that no longer exist, and it can
+   * disagree with a provider about whether one takes a reasoning parameter.
+   * Without an override the user's only recourse is a 400 on every turn.
+   */
+  test('a thinking override round-trips and clears back to the catalog', () =>
+    withTempDir(async (dir) => {
+      await mkdir(join(dir, '.earshot'), { recursive: true });
+      await writeFile(join(dir, '.earshot/settings.json'), JSON.stringify({ curiosity: 'high' }));
+
+      await persistThinking('groq/llama-3.3-70b', false, 'project', dir);
+      let loaded = await loadSettings(dir);
+      expect(loaded.thinking['groq/llama-3.3-70b']).toBe(false);
+      expect(loaded.curiosity).toBe('high');
+
+      await persistThinking('groq/llama-3.3-70b', true, 'project', dir);
+      loaded = await loadSettings(dir);
+      expect(loaded.thinking['groq/llama-3.3-70b']).toBe(true);
+
+      await persistThinking('groq/llama-3.3-70b', undefined, 'project', dir);
+      loaded = await loadSettings(dir);
+      expect(loaded.thinking['groq/llama-3.3-70b']).toBeUndefined();
+      expect(loaded.problems).toEqual([]);
+    }));
+
+  test('a non-boolean thinking override is reported, not silently ignored', () =>
+    withTempDir(async (dir) => {
+      await mkdir(join(dir, '.earshot'), { recursive: true });
+      await writeFile(
+        join(dir, '.earshot/settings.json'),
+        JSON.stringify({ thinking: { 'groq/x': 'yes' } }),
+      );
+      const loaded = await loadSettings(dir);
+      expect(loaded.thinking['groq/x']).toBeUndefined();
+      expect(loaded.problems.join('\n')).toContain('must be true or false');
     }));
 
   test('reads curiosity and maxCostUsd, narrowest scope winning', () =>

@@ -32,8 +32,15 @@ earshot update [--check]          update earshot to the latest release
 Plain `earshot` creates a new chat. `earshot sessions` or `/sessions` opens a searchable list
 for the current directory; `--continue` resumes the latest. In the TUI,
 `/model` and `/reasoning` open pickers, while arguments provide a fast path.
-Selections are remembered per project. `/thinking hide` hides streamed
-reasoning and `/thinking show` restores it.
+Choosing a model ends by asking where to keep it — everywhere, or this project
+only — and the confirmation names the settings file it wrote.
+
+`/reasoning on` and `/reasoning off` force reasoning for the current model
+regardless of what the catalog claims it supports, which is the way out when a
+provider rejects a reasoning parameter it is listed as accepting, or accepts one
+it is not. The other values set the effort. `/thinking hide` hides streamed
+reasoning and `/thinking show` restores it - it controls the display, not the
+request.
 
 Runs a single non-interactive turn and prints the response.
 
@@ -249,7 +256,7 @@ Typed at the prompt during an interactive session.
 |---|---|
 | `/help` | List the commands you can type |
 | `/model [ref]` | Show the model in use, or switch to another for the rest of the session |
-| `/reasoning [auto\|none\|low\|medium\|high\|xhigh]` | Show or change reasoning effort for the current model |
+| `/reasoning [on\|off\|auto\|none\|low\|medium\|high\|xhigh]` | Change reasoning effort, or force reasoning on or off for this model |
 | `/thinking [show\|hide]` | Show or hide streamed model reasoning |
 | `/mode <plan\|ask\|accept-edits\|auto\|yolo>` | Change the permission mode |
 | `/plan <task>` | Draft a plan in plan mode and write it to a file |

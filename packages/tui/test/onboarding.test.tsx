@@ -77,6 +77,9 @@ async function selectFirstModel(stdout: FakeStdout, stdin: FakeStdin): Promise<v
 
 interface Fixture extends Partial<OnboardingOptions> {
   providers?: OnboardingProvider[];
+  /** Mounted as the in-session `/model` picker rather than as first-run. */
+  embedded?: boolean;
+  defaultScope?: 'global' | 'project';
 }
 
 /** Records what would have reached disk, without a real AuthStore. */
@@ -114,12 +117,20 @@ function withApp(
   return (async () => {
     const stdout = new FakeStdout();
     const stdin = new FakeStdin();
-    const instance = render(<Onboarding {...options} onDone={(result) => results.push(result)} />, {
-      stdout: stdout as never,
-      stdin: stdin as never,
-      exitOnCtrlC: false,
-      patchConsole: false,
-    });
+    const instance = render(
+      <Onboarding
+        {...options}
+        {...(fixture.embedded ? { embedded: true } : {})}
+        {...(fixture.defaultScope ? { defaultScope: fixture.defaultScope } : {})}
+        onDone={(result) => results.push(result)}
+      />,
+      {
+        stdout: stdout as never,
+        stdin: stdin as never,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    );
     try {
       await settle();
       await run({ stdout, stdin });
@@ -454,5 +465,106 @@ describe('onboarding: browser sign-in', () => {
         expect(stdout.output).toContain('the browser flow timed out');
       },
     );
+  });
+});
+
+/**
+ * The `/model` picker used to write project-scoped settings on `enter` and hide
+ * "save globally" behind `ctrl+g` on one screen and a bare `g` on another. A
+ * model chosen in one directory then reverted to the stale global default
+ * everywhere else, with nothing on screen having said so.
+ */
+describe('onboarding: where a choice is saved', () => {
+  const groq: OnboardingProvider = {
+    id: 'groq',
+    models: [{ id: 'llama-3.3-70b', name: 'Llama 3.3 70B' }],
+    kind: 'api-key',
+    configured: 'api key set',
+  };
+
+  test('the embedded picker asks, and defaults to everywhere', async () => {
+    const { results } = await withApp(
+      { providers: [groq], embedded: true },
+      async ({ stdout, stdin }) => {
+        stdin.send('\r'); // pick the provider
+        await selectFirstModel(stdout, stdin);
+        await waitFor(stdout, 'where?');
+        expect(stdout.output).toContain('everywhere');
+        expect(stdout.output).toContain('this project only');
+        stdin.send('\r');
+        await settle(60);
+      },
+    );
+    expect(results).toEqual([
+      { outcome: 'ready', providerId: 'groq', model: 'groq/llama-3.3-70b', scope: 'global' },
+    ]);
+  });
+
+  test('choosing the second option scopes it to the project', async () => {
+    const { results } = await withApp(
+      { providers: [groq], embedded: true },
+      async ({ stdout, stdin }) => {
+        stdin.send('\r'); // pick the provider
+        await selectFirstModel(stdout, stdin);
+        await waitFor(stdout, 'where?');
+        stdin.send('\u001b[B'); // down
+        await settle(30);
+        stdin.send('\r');
+        await settle(60);
+      },
+    );
+    expect(results[0]?.scope).toBe('project');
+  });
+
+  test('defaultScope only positions the cursor', async () => {
+    const { results } = await withApp(
+      { providers: [groq], embedded: true, defaultScope: 'project' },
+      async ({ stdout, stdin }) => {
+        stdin.send('\r'); // pick the provider
+        await selectFirstModel(stdout, stdin);
+        await waitFor(stdout, 'where?');
+        stdin.send('\r');
+        await settle(60);
+      },
+    );
+    expect(results[0]?.scope).toBe('project');
+  });
+
+  test('the hidden g accelerator is gone: it neither saves nor completes', async () => {
+    const { results } = await withApp(
+      { providers: [groq], embedded: true },
+      async ({ stdout, stdin }) => {
+        stdin.send('\r'); // pick the provider
+        await waitFor(stdout, 'choose a model from');
+        stdin.send('g');
+        await settle(60);
+      },
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  test('first-run onboarding never asks - there is no project yet', async () => {
+    const { results } = await withApp({ providers: [groq] }, async ({ stdout, stdin }) => {
+      stdin.send('\r'); // pick the provider
+      await selectFirstModel(stdout, stdin);
+      await settle(80);
+    });
+    expect(results[0]?.scope).toBe('global');
+  });
+
+  test('esc from the scope screen goes back to the model list', async () => {
+    const { results } = await withApp(
+      { providers: [groq], embedded: true },
+      async ({ stdout, stdin }) => {
+        stdin.send('\r'); // pick the provider
+        await selectFirstModel(stdout, stdin);
+        await waitFor(stdout, 'where?');
+        const before = stdout.output.length;
+        stdin.send('\u001b');
+        await settle(60);
+        expect(stdout.output.slice(before)).toContain('choose a model from');
+      },
+    );
+    expect(results).toHaveLength(0);
   });
 });
