@@ -22,3 +22,5 @@ export function dataDir(): string {
 
 export const authFile = (): string => join(configDir(), 'auth.json');
 export const sessionsDir = (): string => join(dataDir(), 'sessions');
+/** Free-tier quota counters. Data, not config: losing it costs one wasted 429. */
+export const ledgerFile = (): string => join(dataDir(), 'pool-ledger.json');

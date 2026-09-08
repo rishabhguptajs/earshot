@@ -4,6 +4,7 @@ export * from './catalog/index.ts';
 export * from './errors.ts';
 export * from './oauth/index.ts';
 export * from './paths.ts';
+export * from './pool/index.ts';
 export * from './registry.ts';
 export * from './types.ts';
 export * from './wire/index.ts';
