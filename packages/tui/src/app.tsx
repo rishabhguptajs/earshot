@@ -207,6 +207,18 @@ export function App({
             case 'model_start':
               setActivity('thinking');
               break;
+            case 'model_switch':
+              // Dim, one line: the swap is worth knowing about and not worth
+              // interrupting the answer for.
+              setModel(event.model);
+              push({
+                kind: 'notice',
+                id: nextId(),
+                text: `↳ ${event.reason} · ${event.model}`,
+                color: theme.muted,
+              });
+              void session.recordConfiguration({ model: event.model });
+              break;
             case 'text_delta':
               if (!reasoningFlushed && reasoningText.trim() !== '' && showThinking) {
                 push({ kind: 'reasoning', id: nextId(), text: reasoningText.trimEnd() });

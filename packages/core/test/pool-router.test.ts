@@ -327,3 +327,77 @@ describe('when the pool is spent', () => {
     expect(bucket?.cooldownUntil).toBe(NOON + 2_000);
   });
 });
+
+/**
+ * A session that silently changed model halfway is one where odd output has no
+ * explanation. The swap is announced before the request rather than after, so
+ * the user knows which model is answering while it answers.
+ */
+describe('announcing a swap', () => {
+  test('says what was left behind and why', async () => {
+    const pool = fakePool({ groq: rateLimit, cerebras: 'ok' });
+    const events = await drain(
+      routePooled(
+        { candidates: [candidate('groq'), candidate('cerebras')], open: pool.open },
+        request(),
+        { ledger: await tempLedger(), sleep: noSleep, now: () => NOON },
+      ),
+    );
+
+    const switched = events.find((event) => event.type === 'switched');
+    expect(switched).toBeDefined();
+    if (switched?.type !== 'switched') throw new Error('expected a switch');
+    expect(switched.providerId).toBe('cerebras');
+    expect(switched.reason).toBe('groq is rate limited');
+    // Before any content from the new model, so a consumer can relabel first.
+    expect(events.indexOf(switched)).toBeLessThan(
+      events.findIndex((event) => event.type === 'text_delta'),
+    );
+  });
+
+  test('an account skipped on quota is reported too, not silently passed over', async () => {
+    const ledger = await tempLedger();
+    const spent = candidate('groq', { limits: { rpm: 1 } });
+    await ledger.reserve(spent.bucket, NOON);
+
+    const pool = fakePool({ cerebras: 'ok' });
+    const events = await drain(
+      routePooled({ candidates: [spent, candidate('cerebras')], open: pool.open }, request(), {
+        ledger,
+        sleep: noSleep,
+        now: () => NOON,
+      }),
+    );
+
+    const switched = events.find((event) => event.type === 'switched');
+    if (switched?.type !== 'switched') throw new Error('expected a switch');
+    expect(switched.reason).toContain('groq is out of requests per minute');
+  });
+
+  test('the first candidate is not a switch', async () => {
+    const pool = fakePool({ groq: 'ok' });
+    const events = await drain(
+      routePooled({ candidates: [candidate('groq')], open: pool.open }, request(), {
+        ledger: await tempLedger(),
+        sleep: noSleep,
+        now: () => NOON,
+      }),
+    );
+    expect(events.some((event) => event.type === 'switched')).toBe(false);
+  });
+
+  test('a key the provider rejected is named as such', async () => {
+    const pool = fakePool({ groq: authFailure, cerebras: 'ok' });
+    const events = await drain(
+      routePooled(
+        { candidates: [candidate('groq'), candidate('cerebras')], open: pool.open },
+        request(),
+        { ledger: await tempLedger(), sleep: noSleep, now: () => NOON },
+      ),
+    );
+
+    const switched = events.find((event) => event.type === 'switched');
+    if (switched?.type !== 'switched') throw new Error('expected a switch');
+    expect(switched.reason).toBe('groq rejected its key');
+  });
+});

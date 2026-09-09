@@ -64,6 +64,8 @@ export function toStreamRecord(event: AgentEvent): StreamRecord | undefined {
   switch (event.type) {
     case 'model_start':
       return { ...base, type: 'model_start', model: event.model };
+    case 'model_switch':
+      return { ...base, type: 'model_start', model: event.model };
     case 'text_delta':
       return { ...base, type: 'text', text: event.text };
     case 'reasoning_delta':

@@ -58,6 +58,8 @@ export async function* routePooled(
   const rejected = new Set<string>();
   const blocked: Array<{ candidate: PoolCandidate; reason: string; retryAt: number }> = [];
   let lastError: EarshotError | undefined;
+  /** What we walked past to get here, and why. Empty on the first candidate. */
+  let left: { candidate: PoolCandidate; reason: string } | undefined;
 
   for (const candidate of ctx.candidates) {
     if (rejected.has(candidate.bucket)) continue;
@@ -67,19 +69,33 @@ export async function* routePooled(
     // request discovering that.
     if (candidate.model.contextWindow <= needed) {
       blocked.push({ candidate, reason: 'context too small', retryAt: 0 });
+      left = { candidate, reason: `${candidate.provider.id}'s context is too small` };
       continue;
     }
 
     const room = await ledger.headroom(candidate.bucket, candidate.limits, now());
     if (!room.ok) {
       blocked.push({ candidate, reason: room.reason, retryAt: room.retryAt });
+      left = { candidate, reason: `${candidate.provider.id} is out of ${room.reason}` };
       continue;
+    }
+
+    // Announced before the request, not after: the point of saying so is that
+    // the user knows which model is answering while it answers.
+    if (left) {
+      yield {
+        type: 'switched',
+        providerId: candidate.provider.id,
+        modelId: candidate.model.id,
+        reason: left.reason,
+      };
     }
 
     const outcome = yield* attempt(ctx, candidate, request, { ledger, sleep, now });
     if (outcome.done) return;
     if (outcome.error) lastError = outcome.error;
     if (outcome.rejected) rejected.add(candidate.bucket);
+    left = { candidate, reason: describe(candidate, outcome.error) };
   }
 
   yield { type: 'error', error: exhausted(blocked, lastError, now()) };
@@ -162,6 +178,14 @@ async function* attempt(
     }
     await sleep(backoff);
   }
+}
+
+/** Why we left the previous candidate, in the few words a notice line has room for. */
+function describe(previous: PoolCandidate, error: EarshotError | undefined): string {
+  if (error?.kind === 'auth') return `${previous.provider.id} rejected its key`;
+  if (error?.kind === 'rate_limit') return `${previous.provider.id} is rate limited`;
+  if (error) return `${previous.provider.id} failed (${error.kind})`;
+  return `${previous.provider.id} has no quota left`;
 }
 
 /** `Retry-After` is the one rate-limit header every vendor actually agrees on. */

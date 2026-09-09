@@ -3,6 +3,7 @@ import type { ProviderRegistry } from '../registry.ts';
 import type { Credentials, Model, Provider } from '../types.ts';
 import { FREE_TIERS, type FreeTier, LOCAL_TIERS } from './free-table.ts';
 import { bucketKey, type QuotaLimits } from './ledger.ts';
+import { openrouterFreeModels } from './openrouter-free.ts';
 
 /**
  * The `free` pseudo-provider.
@@ -40,6 +41,8 @@ export interface PoolCandidate {
 
 export interface PoolOptions {
   store?: AuthStore;
+  /** Live free listings, keyed by provider id. Resolved once per lookup. */
+  live?: Record<string, Array<Model & { tier: PoolTier }>>;
   env?: NodeJS.ProcessEnv;
   /** Per-`provider/model` rank override from settings; lower sorts first. */
   ranking?: Record<string, number>;
@@ -67,6 +70,22 @@ function ranked(registry: ProviderRegistry, tier: PoolTier, opts: PoolOptions) {
     const provider = registry.get(free.providerId);
     if (!provider) continue;
     const available = provider.models();
+
+    // A provider whose free list is resolved live brings its own models: the
+    // catalog does not know which of them are free today, and being wrong about
+    // that means routing to one that will be billed or has been retired.
+    if (free.live) {
+      for (const [modelRank, model] of (opts.live?.[free.providerId] ?? []).entries()) {
+        if (model.tier !== tier) continue;
+        out.push({
+          provider,
+          model,
+          free,
+          rank: opts.ranking?.[`${provider.id}/${model.id}`] ?? providerRank * 100 + modelRank,
+        });
+      }
+      continue;
+    }
 
     for (const [modelRank, wanted] of free.models.entries()) {
       if (wanted.tier !== tier) continue;
@@ -135,9 +154,10 @@ export async function poolCandidates(
   opts: PoolOptions = {},
 ): Promise<PoolCandidate[]> {
   const store = opts.store ?? new AuthStore();
+  const live = opts.live ?? (await liveListings(opts));
   const candidates: PoolCandidate[] = [];
 
-  for (const entry of ranked(registry, tier, opts)) {
+  for (const entry of ranked(registry, tier, { ...opts, live })) {
     const accounts = await store.listAccounts(entry.provider.id);
 
     // A local runtime needs no key, and an env var counts as one account even
@@ -210,6 +230,22 @@ async function localCandidates(
         local: true,
       });
     }
+  }
+  return out;
+}
+
+/**
+ * Free listings that have to be asked for rather than read from the catalog.
+ *
+ * Cached behind the fetch, so in the common case this is a file read rather
+ * than a network call on every lookup.
+ */
+async function liveListings(
+  opts: PoolOptions,
+): Promise<Record<string, Array<Model & { tier: PoolTier }>>> {
+  const out: Record<string, Array<Model & { tier: PoolTier }>> = {};
+  for (const free of opts.tiers ?? FREE_TIERS) {
+    if (free.live === 'openrouter-pricing') out[free.providerId] = await openrouterFreeModels();
   }
   return out;
 }

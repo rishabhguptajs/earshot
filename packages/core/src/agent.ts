@@ -61,6 +61,12 @@ import { detectTestCommand, runVerification, type VerificationResult } from './v
 /** Everything the TUI and the headless renderer need to show a turn. */
 export type AgentEvent =
   | { type: 'model_start'; model: string }
+  /**
+   * The pool moved to a different provider. Reported rather than hidden: a
+   * session that silently changed model halfway is one where odd output has no
+   * explanation, and the transcript should say which model actually answered.
+   */
+  | { type: 'model_switch'; model: string; reason: string }
   | { type: 'text_delta'; text: string }
   | { type: 'reasoning_delta'; text: string }
   | { type: 'message'; message: Message }
@@ -477,7 +483,7 @@ export class Agent {
     });
 
     const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_STEPS;
-    const modelName = `${this.resolved.provider.id}/${this.resolved.model.id}`;
+    let modelName = `${this.resolved.provider.id}/${this.resolved.model.id}`;
 
     for (let step = 0; step < maxSteps; step++) {
       if (signal.aborted) {
@@ -529,6 +535,24 @@ export class Agent {
             const costUsd = turnCost(this.resolved.model, event.usage);
             this.addCost(costUsd);
             yield { type: 'usage', usage: event.usage, costUsd };
+            break;
+          }
+          case 'switched': {
+            // The resolved model is updated in place so cost, the status line
+            // and the next `model_start` all name what is really answering.
+            const swapped = this.resolved.pool?.candidates.find(
+              (one) => one.provider.id === event.providerId && one.model.id === event.modelId,
+            );
+            if (swapped) {
+              this.resolved = {
+                ...this.resolved,
+                provider: swapped.provider,
+                model: swapped.model,
+                credentials: swapped.credentials,
+              };
+            }
+            modelName = `${event.providerId}/${event.modelId}`;
+            yield { type: 'model_switch', model: modelName, reason: event.reason };
             break;
           }
           case 'error':
