@@ -2,7 +2,13 @@ import { spawnSync } from 'node:child_process';
 import { access, constants, readFile, stat } from 'node:fs/promises';
 import { homedir, platform, release } from 'node:os';
 import { dirname, join } from 'node:path';
-import { loadSettings, resolveShell, ShellNotFoundError, VERSION } from '@earshot/core';
+import {
+  defaultModelOrigins,
+  loadSettings,
+  resolveShell,
+  ShellNotFoundError,
+  VERSION,
+} from '@earshot/core';
 import { buildRegistry, openrouterFreeModels, POOL_PROVIDER_ID } from '@earshot/providers';
 import type { ParsedArgs } from '../args.ts';
 
@@ -175,6 +181,20 @@ async function modelCheck(cwd: string): Promise<DoctorCheck | undefined> {
   // what `earshot pool status` reports, and it needs credentials to say so.
   if (ref.startsWith(`${POOL_PROVIDER_ID}/`)) {
     return { name: 'default model', status: 'pass', detail: `${ref} (free pool)` };
+  }
+
+  // The pool is on but something narrower pins a concrete model: usually the
+  // first-run picker's choice, saved into the project before the pool existed.
+  // Every session then starts off the pool, and nothing says why.
+  if (settings?.pool.enabled) {
+    const origin = (await defaultModelOrigins(cwd)).findLast((one) => one.model === ref);
+    return {
+      name: 'default model',
+      status: 'warn',
+      detail:
+        `pool is on, but ${origin?.path ?? 'settings'} pins "${ref}" - ` +
+        'run `earshot pool enable` again to start sessions on free/best',
+    };
   }
 
   // OpenRouter's free listing is the one the catalog is reliably wrong about,

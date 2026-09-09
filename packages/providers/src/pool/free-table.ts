@@ -57,26 +57,22 @@ export const FREE_TIERS: FreeTier[] = [
     providerId: 'groq',
     label: 'Groq',
     signupUrl: 'https://console.groq.com/keys',
-    limits: { rpm: 30, rpd: 14_400, tpm: 12_000 },
+    // Per console.groq.com/docs/rate-limits, free plan, September 2026. The
+    // tokens-per-day cap is the one a coding session actually hits.
+    limits: { rpm: 30, rpd: 1_000, tpm: 8_000, tpd: 200_000 },
     trainsOnData: false,
+    // Groq has retired its Llama 3.x endpoints; the Qwen 3.x models replaced
+    // them on the free plan.
     models: [
       { id: 'openai/gpt-oss-120b', tier: 'best' },
-      { id: 'llama-3.3-70b-versatile', tier: 'fast' },
+      { id: 'qwen/qwen3.8-27b', tier: 'fast' },
       { id: 'openai/gpt-oss-20b', tier: 'fast' },
-      { id: 'llama-3.1-8b-instant', tier: 'cheap' },
+      { id: 'qwen/qwen3.6-27b', tier: 'cheap' },
     ],
   },
-  {
-    providerId: 'cerebras',
-    label: 'Cerebras',
-    signupUrl: 'https://cloud.cerebras.ai',
-    limits: { rpm: 30, rpd: 14_400, tpm: 60_000 },
-    trainsOnData: false,
-    models: [
-      { id: 'gpt-oss-120b', tier: 'best' },
-      { id: 'qwen-3.8-27b', tier: 'fast' },
-    ],
-  },
+  // Cerebras is deliberately absent: its "free trial" now needs a verified
+  // payment method for the $5 of credits, which expire after 30 days. That is
+  // a trial, not a free tier, and it would be routed to only to bill someone.
   {
     providerId: 'google',
     label: 'Google AI Studio',
@@ -98,12 +94,17 @@ export const FREE_TIERS: FreeTier[] = [
     providerId: 'mistral',
     label: 'Mistral',
     signupUrl: 'https://console.mistral.ai/api-keys',
-    limits: { rpm: 60, rpd: 500_000, tpm: 500_000 },
+    // The Experiment tier is rate limited to about a request a second and a
+    // token budget per month rather than per day; there is no daily request
+    // count to publish, so only the per-minute figures are estimated here.
+    limits: { rpm: 60, tpm: 500_000 },
     // Mistral's free "experiment" tier is conditional on data being usable for
     // training; their paid plans are not.
     trainsOnData: true,
+    // `devstral-medium-2507` is no longer served; the medium model is the best
+    // tool-calling option the Experiment tier still lists.
     models: [
-      { id: 'devstral-medium-2507', tier: 'best' },
+      { id: 'mistral-medium-latest', tier: 'best' },
       { id: 'mistral-small-latest', tier: 'fast' },
       { id: 'ministral-8b-latest', tier: 'cheap' },
     ],
@@ -124,9 +125,9 @@ export const FREE_TIERS: FreeTier[] = [
     providerId: 'nvidia',
     label: 'NVIDIA NIM',
     signupUrl: 'https://build.nvidia.com',
-    // NIM's hosted endpoints are free to call while an account has credits, and
-    // a new account is granted them on signup. Cloud credits are consumed rather
-    // than a request count reset daily, so there is no honest rpd to publish -
+    // build.nvidia.com dropped its credit meter; hosted endpoints are free to
+    // call on the developer programme at 40 requests a minute, with per-model
+    // ceilings NVIDIA does not publish. There is no honest rpd to write down -
     // the ledger learns the real ceiling from the 429 when it arrives.
     limits: { rpm: 40 },
     trainsOnData: false,
@@ -137,7 +138,9 @@ export const FREE_TIERS: FreeTier[] = [
       { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', tier: 'fast' },
       { id: 'openai/gpt-oss-20b', tier: 'cheap' },
     ],
-    notice: 'hosted NIM endpoints draw on signup credits rather than a daily request count.',
+    notice:
+      'NVIDIA no longer publishes limits for hosted NIM endpoints beyond 40 requests a minute; ' +
+      'the ledger learns the rest from the first 429.',
   },
   {
     providerId: 'cloudflare',
@@ -160,14 +163,9 @@ export const FREE_TIERS: FreeTier[] = [
       'the free tier is 10,000 neurons/day, which a long coding turn can spend quickly. ' +
       'connecting it needs your account id as well as a token.',
   },
-  {
-    providerId: 'together',
-    label: 'Together AI',
-    signupUrl: 'https://api.together.xyz/settings/api-keys',
-    limits: { rpm: 60, rpd: 1_000 },
-    trainsOnData: false,
-    models: [{ id: 'openai/gpt-oss-20b', tier: 'cheap' }],
-  },
+  // Together AI is absent for the same reason: it withdrew its free tier and
+  // its signup credits during 2025. Both remain supported paid providers; they
+  // are just not something to pool.
   // Local runtimes are the floor of the pool: no quota, no key, no network, and
   // therefore the only member that cannot be exhausted. They are reached only
   // when every metered tier is spent.

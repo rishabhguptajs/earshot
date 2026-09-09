@@ -109,10 +109,15 @@ is connected and still has quota.
 ```bash
 earshot pool setup                 # the wizard: pick providers, paste keys
 earshot pool status                # what is connected, what is spent, when it resets
-earshot pool enable                # or disable
+earshot pool enable                # or disable; enable also makes free/best the default
 earshot pool forget groq#work      # drop one account, or a whole provider
 earshot pool add-endpoint <id> <base-url> <model-id>...
 ```
+
+`defaultModel` is narrowest-scope-wins, so enabling the pool rewrites any
+project or local settings file that pins a concrete model - otherwise a choice
+saved before the pool existed would shadow it, and the pool would be on without
+ever being used. `earshot doctor` warns if it finds that state.
 
 Free tiers meter per **account**, not per key: a second key minted inside the
 same account draws down the same bucket. The wizard can hold several accounts

@@ -4,6 +4,7 @@ import {
   type CustomProviderConfig,
   configDir,
   isReasoningEffort,
+  POOL_PROVIDER_ID,
   type ReasoningEffort,
 } from '@earshot/providers';
 import { type Curiosity, isCuriosity } from '../context/system-prompt.ts';
@@ -210,6 +211,48 @@ export async function persistDefaultModel(
     'utf8',
   );
   return path;
+}
+
+/** Where each scope's `defaultModel` comes from, narrowest last. */
+export async function defaultModelOrigins(
+  cwd: string,
+): Promise<Array<{ scope: 'global' | 'project' | 'local'; path: string; model: string }>> {
+  const out: Array<{ scope: 'global' | 'project' | 'local'; path: string; model: string }> = [];
+  for (const scope of ['global', 'project', 'local'] as const) {
+    const path = settingsPath(scope, cwd);
+    const file = await readSettings(path).catch(() => undefined);
+    const model = file?.defaultModel?.trim();
+    if (model) out.push({ scope, path, model });
+  }
+  return out;
+}
+
+/**
+ * Turns the pool on and makes `free/best` the default everywhere it would
+ * otherwise be shadowed.
+ *
+ * `loadSettings` lets the narrowest scope win for `defaultModel`, so a model
+ * the first-run picker saved into `./.earshot/settings.json` before the pool
+ * existed keeps beating a `free/best` written to the global file - and the
+ * user who just connected seven providers starts their next session on the
+ * one model they had before. Rewriting the narrower scopes as well is what
+ * makes "pool on" mean what it says. Returns every file written.
+ */
+export async function adoptPoolDefault(
+  model: string,
+  cwd: string,
+): Promise<{ paths: string[]; replaced: Array<{ path: string; model: string }> }> {
+  const paths = [await persistPool({ enabled: true }, 'global', cwd)];
+  await persistDefaultModel(model, 'global', cwd);
+  const replaced: Array<{ path: string; model: string }> = [];
+  for (const origin of await defaultModelOrigins(cwd)) {
+    // A scope already on some pool tier is a choice, not a leftover.
+    if (origin.scope === 'global' || origin.model.startsWith(`${POOL_PROVIDER_ID}/`)) continue;
+    await persistDefaultModel(model, origin.scope, cwd);
+    paths.push(origin.path);
+    replaced.push({ path: origin.path, model: origin.model });
+  }
+  return { paths, replaced };
 }
 
 export async function persistReasoningEffort(

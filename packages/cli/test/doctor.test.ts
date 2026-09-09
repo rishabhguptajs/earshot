@@ -37,6 +37,33 @@ describe('earshot doctor', () => {
     });
   });
 
+  test('warns when the pool is on but a project file pins another default model', async () => {
+    await withTempDir(async (dir) => {
+      const config = join(dir, 'config');
+      await mkdir(config, { recursive: true });
+      await writeFile(
+        join(config, 'settings.json'),
+        JSON.stringify({ defaultModel: 'free/best', pool: { enabled: true } }),
+      );
+      await mkdir(join(dir, '.earshot'));
+      await writeFile(
+        join(dir, '.earshot', 'settings.json'),
+        JSON.stringify({ defaultModel: 'openrouter/openrouter/free' }),
+      );
+      const checks = await runDoctor({
+        cwd: dir,
+        env: { EARSHOT_CONFIG_DIR: config, EARSHOT_DATA_DIR: join(dir, 'data') },
+        nodeVersion: '22.12.0',
+        platform: 'linux',
+        run: () => ({ status: 0, stdout: 'git version 2.47.0' }),
+      });
+      const model = checks.find((check) => check.name === 'default model');
+      expect(model?.status).toBe('warn');
+      expect(model?.detail).toContain('.earshot');
+      expect(model?.detail).toContain('earshot pool enable');
+    });
+  });
+
   // The shell check reads the injected platform, so this reports the Windows
   // rule from any runner. Previously it read the host's, and the Linux test above
   // failed on the Windows runner by looking for a Git Bash that was not there.

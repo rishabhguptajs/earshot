@@ -9,6 +9,8 @@ import { SessionPicker } from './sessions.tsx';
 export interface RunTuiOptions {
   session: CreatedSession;
   model: string;
+  /** The `free/*` tier the session was started on, when it is pooled. */
+  poolTier?: string;
   initialPrompt?: UserPrompt;
   modelOptions?: OnboardingOptions;
   poolOptions?: PoolOptionsBinding;
@@ -45,6 +47,7 @@ export async function runTui(options: RunTuiOptions): Promise<RunTuiResult> {
     <App
       session={options.session}
       model={options.model}
+      {...(options.poolTier ? { poolTier: options.poolTier } : {})}
       {...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {})}
       {...(options.modelOptions ? { modelOptions: options.modelOptions } : {})}
       {...(options.poolOptions ? { poolOptions: options.poolOptions } : {})}
