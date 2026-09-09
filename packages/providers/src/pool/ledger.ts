@@ -115,9 +115,11 @@ export function headroomOf(bucket: Bucket | undefined, limits: QuotaLimits, now:
  */
 export class QuotaLedger {
   #path: string;
+  #lockTimeoutMs: number;
 
-  constructor(path = ledgerFile()) {
+  constructor(path = ledgerFile(), lockTimeoutMs = 2_000) {
     this.#path = path;
+    this.#lockTimeoutMs = lockTimeoutMs;
   }
 
   async read(): Promise<Record<string, Bucket>> {
@@ -203,16 +205,19 @@ export class QuotaLedger {
   /**
    * `mkdir` is the lock: it is atomic on every filesystem we run on, and unlike
    * an advisory lock it leaves something visible behind if a process dies. A
-   * stale directory is taken over rather than waited on forever - quota
-   * counting is not worth deadlocking a session over.
+   * A lock that remains contended is bypassed rather than waited on forever -
+   * quota counting is not worth deadlocking a session over. A process that
+   * bypasses the lock must not remove it, because another writer owns it.
    */
   async #withLock<T>(fn: () => Promise<T>): Promise<T> {
     const lock = `${this.#path}.lock`;
-    const deadline = Date.now() + 2_000;
+    const deadline = Date.now() + this.#lockTimeoutMs;
+    let acquired = false;
     for (;;) {
       try {
         await mkdir(dirname(lock), { recursive: true });
         await mkdir(lock);
+        acquired = true;
         break;
       } catch {
         if (Date.now() > deadline) break; // stale or contended; proceed anyway
@@ -222,7 +227,7 @@ export class QuotaLedger {
     try {
       return await fn();
     } finally {
-      await rm(lock, { recursive: true, force: true }).catch(() => {});
+      if (acquired) await rm(lock, { recursive: true, force: true }).catch(() => {});
     }
   }
 }

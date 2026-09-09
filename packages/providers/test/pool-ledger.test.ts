@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bucketKey, headroomOf, QuotaLedger } from '../src/pool/ledger.ts';
@@ -155,6 +155,17 @@ describe('the ledger file', () => {
       { minute: { requests: number } }
     >;
     expect(buckets[key]?.minute.requests).toBe(20);
+  });
+
+  test('a writer that times out does not remove another writer’s lock', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'earshot-pool-'));
+    const path = join(dir, 'ledger.json');
+    const lock = `${path}.lock`;
+    await mkdir(lock);
+
+    await new QuotaLedger(path, 0).reserve(bucketKey('groq', 'default'), NOON);
+
+    await access(lock);
   });
 
   test('clear forgets one account without touching the others', async () => {
