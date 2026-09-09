@@ -1,0 +1,5 @@
+# The TUI tests drive real Ink renders through a fake terminal and wait on
+# output between keypresses. Under a loaded CI runner that can take longer
+# than bun's 5 s default, which is a timeout, not a failure.
+[test]
+timeout = 20000

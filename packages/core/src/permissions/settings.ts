@@ -69,8 +69,9 @@ export interface LoadedSettings {
 export const PROJECT_SETTINGS = join('.earshot', 'settings.json');
 export const LOCAL_SETTINGS = join('.earshot', 'settings.local.json');
 
-export function settingsPath(scope: RuleScope, cwd: string): string {
-  if (scope === 'global') return join(configDir(), 'settings.json');
+/** Where a scope's file lives. `globalDir` overrides the config directory. */
+export function settingsPath(scope: RuleScope, cwd: string, globalDir?: string): string {
+  if (scope === 'global') return join(globalDir ?? configDir(), 'settings.json');
   if (scope === 'project') return join(cwd, PROJECT_SETTINGS);
   if (scope === 'local') return join(cwd, LOCAL_SETTINGS);
   throw new Error(`scope "${scope}" is not persisted`);
@@ -94,7 +95,10 @@ async function readSettings(path: string): Promise<SettingsFile | undefined> {
  * point of deny-first. `defaultMode` is the exception: it is a preference, not a
  * restriction, so the narrowest scope that sets one wins.
  */
-export async function loadSettings(cwd: string): Promise<LoadedSettings> {
+export async function loadSettings(
+  cwd: string,
+  opts: { configDir?: string } = {},
+): Promise<LoadedSettings> {
   const scopes: RuleScope[] = ['global', 'project', 'local'];
   const rules: Rule[] = [];
   const problems: string[] = [];
@@ -107,7 +111,7 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
   let pool: PoolSettings = {};
 
   for (const scope of scopes) {
-    const path = settingsPath(scope, cwd);
+    const path = settingsPath(scope, cwd, opts.configDir);
     const file = await readSettings(path).catch((error: Error) => {
       problems.push(error.message);
       return undefined;
@@ -216,10 +220,11 @@ export async function persistDefaultModel(
 /** Where each scope's `defaultModel` comes from, narrowest last. */
 export async function defaultModelOrigins(
   cwd: string,
+  opts: { configDir?: string } = {},
 ): Promise<Array<{ scope: 'global' | 'project' | 'local'; path: string; model: string }>> {
   const out: Array<{ scope: 'global' | 'project' | 'local'; path: string; model: string }> = [];
   for (const scope of ['global', 'project', 'local'] as const) {
-    const path = settingsPath(scope, cwd);
+    const path = settingsPath(scope, cwd, opts.configDir);
     const file = await readSettings(path).catch(() => undefined);
     const model = file?.defaultModel?.trim();
     if (model) out.push({ scope, path, model });
