@@ -137,7 +137,9 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
     if (check) checks.push(check);
   }
 
-  const model = await modelCheck(cwd);
+  // The injected config directory, not the process's: `doctor` reports on the
+  // environment it was pointed at, and the tests point it at a temp dir.
+  const model = await modelCheck(cwd, configPath);
   if (model) checks.push(model);
 
   checks.unshift({ name: 'earshot', status: 'pass', detail: VERSION });
@@ -169,8 +171,8 @@ export async function doctorCommand(_args: ParsedArgs): Promise<number> {
  * `:free` OpenRouter models named by a five-day-old catalog snapshot had
  * already ceased to exist, one of them somebody's saved default.
  */
-async function modelCheck(cwd: string): Promise<DoctorCheck | undefined> {
-  const settings = await loadSettings(cwd).catch(() => undefined);
+async function modelCheck(cwd: string, configDir: string): Promise<DoctorCheck | undefined> {
+  const settings = await loadSettings(cwd, { configDir }).catch(() => undefined);
   const ref = settings?.defaultModel;
   if (!ref) return undefined;
 
@@ -187,7 +189,8 @@ async function modelCheck(cwd: string): Promise<DoctorCheck | undefined> {
   // first-run picker's choice, saved into the project before the pool existed.
   // Every session then starts off the pool, and nothing says why.
   if (settings?.pool.enabled) {
-    const origin = (await defaultModelOrigins(cwd)).findLast((one) => one.model === ref);
+    const origins = await defaultModelOrigins(cwd, { configDir });
+    const origin = origins.findLast((one) => one.model === ref);
     return {
       name: 'default model',
       status: 'warn',
