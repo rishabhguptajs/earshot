@@ -91,6 +91,14 @@ export type AgentEvent =
 export interface AgentOptions {
   registry: ProviderRegistry;
   model: ResolvedModel;
+  /**
+   * Model for earshot's own calls - compaction and subagents - rather than the
+   * user's turn. These are high-volume and low-stakes, so a pooled session
+   * points them at a cheaper free tier and keeps the good models' quota for the
+   * conversation. Absent means "use the session model", which is the old
+   * behaviour and stays the behaviour for anyone not pooling.
+   */
+  internalModel?: ResolvedModel;
   reasoningEffort?: ReasoningEffort;
   cwd: string;
   system: string;
@@ -252,6 +260,11 @@ export class Agent {
   /** The model this session is currently calling. */
   get model(): ResolvedModel {
     return this.resolved;
+  }
+
+  /** Where compaction and subagents run. The session model unless pooled. */
+  private get internalModel(): ResolvedModel {
+    return this.options.internalModel ?? this.resolved;
   }
 
   get reasoningEffort(): ReasoningEffort | undefined {
@@ -1007,7 +1020,7 @@ export class Agent {
   /** One extra model call, with no tools: the summary that compaction stands on. */
   private async summarise(messages: Message[], signal: AbortSignal): Promise<string> {
     let text = '';
-    for await (const event of streamModel(this.options.registry, this.resolved, {
+    for await (const event of streamModel(this.options.registry, this.internalModel, {
       system: SUMMARY_PROMPT,
       messages: [...messages, { role: 'user', content: [{ type: 'text', text: SUMMARY_PROMPT }] }],
       ...(this.effort ? { reasoningEffort: this.effort } : {}),
@@ -1084,6 +1097,7 @@ export class Agent {
 
     const child = new Agent({
       ...inherited,
+      model: this.internalModel,
       system:
         // The plan travels with it: a subagent working outside the plan the user
         // approved is the same hole as one working outside the declared scope.

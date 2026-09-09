@@ -1,6 +1,11 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { configDir, isReasoningEffort, type ReasoningEffort } from '@earshot/providers';
+import {
+  type CustomProviderConfig,
+  configDir,
+  isReasoningEffort,
+  type ReasoningEffort,
+} from '@earshot/providers';
 import { type Curiosity, isCuriosity } from '../context/system-prompt.ts';
 import { isPermissionMode, type PermissionMode } from './engine.ts';
 import { parseRule, type Rule, type RuleScope, RuleSyntaxError } from './rules.ts';
@@ -25,6 +30,24 @@ export interface SettingsFile {
    * either mistake.
    */
   thinking?: Record<string, boolean>;
+  pool?: PoolSettings;
+}
+
+/** How the `free` pseudo-provider behaves. Written by `earshot pool setup`. */
+export interface PoolSettings {
+  /** Off by default: pooling is something the user opts into, once. */
+  enabled?: boolean;
+  /** Per-`provider/model` rank override; lower sorts first. */
+  ranking?: Record<string, number>;
+  /** Leaves out free tiers documented as training on submitted data. */
+  excludeTrainingProviders?: boolean;
+  /** Which tier serves compaction, subagents and other internal calls. */
+  internalTier?: 'best' | 'fast' | 'cheap';
+  /**
+   * User-supplied OpenAI-compatible endpoints. earshot ships no unofficial
+   * providers; this is how anyone who wants one wires it up themselves.
+   */
+  endpoints?: CustomProviderConfig[];
 }
 
 export interface LoadedSettings {
@@ -37,6 +60,7 @@ export interface LoadedSettings {
   defaultModel?: string;
   reasoningEfforts: Record<string, ReasoningEffort>;
   thinking: Record<string, boolean>;
+  pool: PoolSettings;
   /** Rules that failed to parse, reported rather than silently dropped. */
   problems: string[];
 }
@@ -79,6 +103,7 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
   let defaultModel: string | undefined;
   const reasoningEfforts: Record<string, ReasoningEffort> = {};
   const thinking: Record<string, boolean> = {};
+  let pool: PoolSettings = {};
 
   for (const scope of scopes) {
     const path = settingsPath(scope, cwd);
@@ -94,6 +119,18 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
     for (const [model, effort] of Object.entries(file.reasoningEfforts ?? {})) {
       if (isReasoningEffort(effort)) reasoningEfforts[model] = effort;
       else problems.push(`${path}: reasoning effort for "${model}" is invalid`);
+    }
+    // Merged rather than replaced, so a project can add one endpoint without
+    // restating the global ranking - but each key is still narrowest-wins.
+    if (file.pool) {
+      pool = {
+        ...pool,
+        ...file.pool,
+        ...(file.pool.ranking ? { ranking: { ...pool.ranking, ...file.pool.ranking } } : {}),
+        ...(file.pool.endpoints
+          ? { endpoints: [...(pool.endpoints ?? []), ...file.pool.endpoints] }
+          : {}),
+      };
     }
     for (const [model, on] of Object.entries(file.thinking ?? {})) {
       if (typeof on === 'boolean') thinking[model] = on;
@@ -154,6 +191,7 @@ export async function loadSettings(cwd: string): Promise<LoadedSettings> {
     ...(defaultModel ? { defaultModel } : {}),
     reasoningEfforts,
     thinking,
+    pool,
     problems,
   };
 }
@@ -213,6 +251,24 @@ export async function persistThinking(
   else thinking[model] = on;
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify({ ...existing, thinking }, null, 2)}\n`, 'utf8');
+  return path;
+}
+
+/**
+ * Merges pool settings into one scope, preserving whatever else is in the file.
+ * A partial patch, because the wizard writes `enabled` and the endpoint command
+ * writes `endpoints`, and neither should erase the other.
+ */
+export async function persistPool(
+  patch: PoolSettings,
+  scope: Extract<RuleScope, 'global' | 'project' | 'local'>,
+  cwd: string,
+): Promise<string> {
+  const path = settingsPath(scope, cwd);
+  const existing = (await readSettings(path).catch(() => undefined)) ?? {};
+  const next: SettingsFile = { ...existing, pool: { ...(existing.pool ?? {}), ...patch } };
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
   return path;
 }
 

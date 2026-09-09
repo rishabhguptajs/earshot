@@ -30,6 +30,8 @@ export interface ResolvedModel {
 }
 
 export const DEFAULT_MODEL = 'anthropic/claude-opus-5';
+/** What a connected pool runs on when nothing more specific is asked for. */
+export const POOL_DEFAULT_MODEL = `${POOL_PROVIDER_ID}/best`;
 
 export class MissingCredentialsError extends Error {
   constructor(readonly provider: Provider) {

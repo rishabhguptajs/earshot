@@ -1,11 +1,17 @@
-import { buildRegistry, type ProviderRegistry, type ReasoningEffort } from '@earshot/providers';
+import {
+  buildRegistry,
+  POOL_PROVIDER_ID,
+  type PoolOptions,
+  type ProviderRegistry,
+  type ReasoningEffort,
+} from '@earshot/providers';
 import { Agent, type AgentOptions } from '../agent.ts';
 import { buildSystemPrompt, type Curiosity } from '../context/system-prompt.ts';
 import { loadHooks } from '../hooks/config.ts';
 import { HookRunner } from '../hooks/runner.ts';
-import { DEFAULT_MODEL, resolveModel } from '../model.ts';
+import { DEFAULT_MODEL, POOL_DEFAULT_MODEL, resolveModel } from '../model.ts';
 import type { PermissionMode, PermissionPrompt } from '../permissions/engine.ts';
-import { loadSettings } from '../permissions/settings.ts';
+import { type LoadedSettings, loadSettings } from '../permissions/settings.ts';
 import {
   discoverExtensions,
   renderSkillIndex,
@@ -118,13 +124,23 @@ export class NoSessionToResumeError extends Error {
  * unwritable data directory means no transcript, but the turn still runs.
  */
 export async function createSession(options: CreateSessionOptions): Promise<CreatedSession> {
-  const registry = options.registry ?? buildRegistry();
   const settings = await loadSettings(options.cwd);
+  // Built after settings, not before: the pool's ranking, its privacy filter and
+  // any user-supplied endpoint all shape which models the registry publishes.
+  const registry =
+    options.registry ??
+    buildRegistry({
+      pool: poolOptionsFrom(settings),
+      ...(settings.pool.endpoints?.length ? { custom: settings.pool.endpoints } : {}),
+    });
   const resumePath = options.ephemeral ? undefined : await resolveResumePath(options);
   const resumeEntries = resumePath ? await readEntries(resumePath) : [];
   const resumedConfiguration = latestConfiguration(resumeEntries);
+  // Once a pool is connected it is what earshot runs on unless told otherwise -
+  // that is the whole promise of setting it up once.
+  const fallbackModel = settings.pool.enabled ? POOL_DEFAULT_MODEL : DEFAULT_MODEL;
   const requestedModel =
-    options.model ?? resumedConfiguration.model ?? settings.defaultModel ?? DEFAULT_MODEL;
+    options.model ?? resumedConfiguration.model ?? settings.defaultModel ?? fallbackModel;
   const configuredEffort =
     options.reasoningEffort !== undefined
       ? options.reasoningEffort
@@ -144,7 +160,17 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
 
   const resolved = await resolveModel(registry, requestedModel, {
     ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+    pool: poolOptionsFrom(settings),
   });
+  // Compaction and subagents are high-volume and low-stakes; sending them to a
+  // cheaper tier keeps the good models' quota for the conversation itself. Only
+  // when a pool is on - otherwise this is the session model, as before.
+  const internalModel = settings.pool.enabled
+    ? await resolveModel(registry, `${POOL_PROVIDER_ID}/${settings.pool.internalTier ?? 'cheap'}`, {
+        pool: poolOptionsFrom(settings),
+      }).catch(() => undefined)
+    : undefined;
+
   const modelRef = `${resolved.provider.id}/${resolved.model.id}`;
   // A `thinking` override beats the catalog in both directions: `false` sends no
   // reasoning parameter at all, even to a model the catalog says can reason,
@@ -234,6 +260,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   const agentOptions: AgentOptions = {
     registry,
     model: resolved,
+    ...(internalModel ? { internalModel } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     cwd: options.cwd,
     system,
@@ -387,4 +414,12 @@ async function resolveResumePath(options: CreateSessionOptions): Promise<string 
   const latest = await latestSession(options.cwd);
   if (!latest) throw new NoSessionToResumeError(options.cwd);
   return latest.path;
+}
+
+/** The slice of settings the pool cares about, in the shape the pool wants it. */
+export function poolOptionsFrom(settings: LoadedSettings): PoolOptions {
+  return {
+    ...(settings.pool.ranking ? { ranking: settings.pool.ranking } : {}),
+    ...(settings.pool.excludeTrainingProviders ? { excludeTrainingProviders: true as const } : {}),
+  };
 }
