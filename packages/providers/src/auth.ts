@@ -3,7 +3,33 @@ import { dirname } from 'node:path';
 import { authFile } from './paths.ts';
 import type { AuthSpec, Credentials, Provider } from './types.ts';
 
-type AuthFileShape = { version: 1; providers: Record<string, Credentials> };
+/**
+ * One credential, named.
+ *
+ * Free tiers meter per *account*, not per key: a second key minted inside the
+ * same account draws down the same bucket. Naming them is what lets the pool
+ * keep one quota ledger per account and tell the user which of theirs is spent.
+ */
+export interface Account extends Credentials {
+  /** Unique within a provider. `default` is the one a bare provider id means. */
+  account: string;
+}
+
+export const DEFAULT_ACCOUNT = 'default';
+
+/**
+ * A v1 file stores one `Credentials` per provider; v2 stores a named list. Both
+ * shapes are read, because v1 files exist on disk right now and a user who
+ * never touches the pool should never see their file rewritten.
+ */
+type StoredProvider = Credentials | { accounts: Account[] };
+type AuthFileShape = { version: 1 | 2; providers: Record<string, StoredProvider> };
+
+function accountsOf(stored: StoredProvider | undefined): Account[] {
+  if (!stored) return [];
+  if ('accounts' in stored) return stored.accounts;
+  return [{ ...stored, account: DEFAULT_ACCOUNT }];
+}
 
 /**
  * Credential store. On-disk file is 0600 and written atomically; OAuth refreshes
@@ -29,19 +55,62 @@ export class AuthStore {
     return this.#cache;
   }
 
+  /** The default account, or the only one. What every non-pool caller wants. */
   async get(providerId: string): Promise<Credentials | undefined> {
-    return (await this.#load()).providers[providerId];
+    const accounts = accountsOf((await this.#load()).providers[providerId]);
+    return accounts.find((one) => one.account === DEFAULT_ACCOUNT) ?? accounts[0];
   }
 
   async set(providerId: string, creds: Credentials): Promise<void> {
-    const data = await this.#load();
-    data.providers[providerId] = creds;
-    await this.#flush(data);
+    return this.setAccount(providerId, DEFAULT_ACCOUNT, creds);
   }
 
+  /** Forgets every account for a provider - what `auth logout <provider>` means. */
   async remove(providerId: string): Promise<void> {
     const data = await this.#load();
     delete data.providers[providerId];
+    await this.#flush(data);
+  }
+
+  async listAccounts(providerId: string): Promise<Account[]> {
+    return accountsOf((await this.#load()).providers[providerId]);
+  }
+
+  /** Every provider that has at least one credential, with its account names. */
+  async list(): Promise<Array<{ providerId: string; accounts: Account[] }>> {
+    const data = await this.#load();
+    return Object.keys(data.providers).map((providerId) => ({
+      providerId,
+      accounts: accountsOf(data.providers[providerId]),
+    }));
+  }
+
+  async setAccount(providerId: string, account: string, creds: Credentials): Promise<void> {
+    const data = await this.#load();
+    const existing = accountsOf(data.providers[providerId]);
+    const next: Account = { ...creds, account };
+    const at = existing.findIndex((one) => one.account === account);
+    if (at >= 0) existing[at] = next;
+    else existing.push(next);
+
+    // A lone default stays in the v1 shape: rewriting every user's file to v2
+    // the first time they log in would break any older earshot sharing it.
+    data.providers[providerId] =
+      existing.length === 1 && existing[0]?.account === DEFAULT_ACCOUNT
+        ? creds
+        : { accounts: existing };
+    if (existing.length > 1) data.version = 2;
+    await this.#flush(data);
+  }
+
+  async removeAccount(providerId: string, account: string): Promise<void> {
+    const data = await this.#load();
+    const kept = accountsOf(data.providers[providerId]).filter((one) => one.account !== account);
+    if (kept.length === 0) delete data.providers[providerId];
+    else if (kept.length === 1 && kept[0]?.account === DEFAULT_ACCOUNT) {
+      const { account: _name, ...creds } = kept[0];
+      data.providers[providerId] = creds;
+    } else data.providers[providerId] = { accounts: kept };
     await this.#flush(data);
   }
 

@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { templatedBaseUrl } from '../src/base-url.ts';
 import { buildRegistry, customProvider } from '../src/builtin.ts';
 import { ModelCatalog } from '../src/catalog/index.ts';
 import { SUPPORTED_PROVIDERS } from '../src/catalog/supported.ts';
+import { FREE_TIERS, LOCAL_TIERS } from '../src/pool/free-table.ts';
 
 const registry = buildRegistry();
 
@@ -92,5 +94,80 @@ describe('ModelCatalog', () => {
     expect(
       new ModelCatalog().modelsFor({ id: 'nope', catalogId: 'nope', api: 'openai-completions' }),
     ).toEqual([]);
+  });
+});
+
+/**
+ * The free table is curated, and curated tables rot. This is the guard that
+ * makes them rot loudly: a five-day-old catalog snapshot already named three
+ * OpenRouter free models that no longer existed, one of which was somebody's
+ * saved default model and failed on their first turn.
+ */
+describe('the free-tier table', () => {
+  test('names only providers that already have an adapter', () => {
+    const known = new Set([...SUPPORTED_PROVIDERS.map((entry) => entry.id), ...LOCAL_TIERS]);
+    const unknown = FREE_TIERS.map((tier) => tier.providerId).filter((id) => !known.has(id));
+    expect(unknown).toEqual([]);
+  });
+
+  test('every provider it names is registered', () => {
+    for (const tier of FREE_TIERS) {
+      expect(registry.get(tier.providerId)).toBeDefined();
+    }
+  });
+
+  test('every model it names still exists in the catalog', () => {
+    const stale: string[] = [];
+    for (const tier of FREE_TIERS) {
+      // Local runtimes publish no catalog, and OpenRouter's free list is
+      // resolved live precisely because writing it down does not survive.
+      if (LOCAL_TIERS.has(tier.providerId) || tier.live) continue;
+      const available = new Set(
+        registry
+          .get(tier.providerId)
+          ?.models()
+          .map((m) => m.id) ?? [],
+      );
+      for (const model of tier.models) {
+        if (!available.has(model.id)) stale.push(`${tier.providerId}/${model.id}`);
+      }
+    }
+    expect(stale).toEqual([]);
+  });
+
+  /**
+   * A templated endpoint that nothing asks for is a login the wizard will store
+   * and the first turn will fail on, from a URL the user never sees.
+   */
+  test('every templated endpoint declares what it needs to be filled in', () => {
+    for (const entry of SUPPORTED_PROVIDERS) {
+      if (!templatedBaseUrl(entry.baseUrl)) continue;
+      const declared = new Set((entry.extraEnv ?? []).map((field) => field.name));
+      const needed = [...(entry.baseUrl ?? '').matchAll(/\$\{(\w+)\}/g)].map((m) => m[1] ?? '');
+      expect(needed.filter((name) => !declared.has(name))).toEqual([]);
+    }
+  });
+
+  test('every model it names can actually run an agent loop', () => {
+    // A model that cannot call tools is useless to the pool: the loop is tool
+    // calls, so routing to one would fail the turn rather than degrade it.
+    const toolless: string[] = [];
+    for (const tier of FREE_TIERS) {
+      if (LOCAL_TIERS.has(tier.providerId) || tier.live) continue;
+      const models = registry.get(tier.providerId)?.models() ?? [];
+      for (const wanted of tier.models) {
+        const model = models.find((m) => m.id === wanted.id);
+        if (model && !model.capabilities.tools) toolless.push(`${tier.providerId}/${wanted.id}`);
+      }
+    }
+    expect(toolless).toEqual([]);
+  });
+
+  test('each metered tier offers a signup URL and at least one model', () => {
+    for (const tier of FREE_TIERS) {
+      expect(tier.signupUrl).toStartWith('https://');
+      if (LOCAL_TIERS.has(tier.providerId) || tier.live) continue;
+      expect(tier.models.length).toBeGreaterThan(0);
+    }
   });
 });

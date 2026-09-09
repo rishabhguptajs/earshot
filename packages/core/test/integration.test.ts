@@ -338,3 +338,76 @@ describe('a session end to end', () => {
     });
   });
 });
+
+/**
+ * The catalog decides whether a model reasons, and it is a vendored snapshot of
+ * someone else's data. When it is wrong the user is stuck: earshot sends a
+ * reasoning parameter the provider rejects, on every turn, with no way to stop
+ * it. `thinking` in settings overrides it in both directions.
+ */
+describe('the thinking override', () => {
+  const settings = (cwd: string, value: unknown) =>
+    mkdir(join(cwd, '.earshot'), { recursive: true }).then(() =>
+      writeFile(join(cwd, '.earshot/settings.json'), JSON.stringify(value)),
+    );
+
+  test('forces reasoning on a model the catalog says cannot reason', async () => {
+    await inSandbox(async (cwd) => {
+      await settings(cwd, { thinking: { 'test/scripted': true } });
+      const model = scripted([{ text: 'ok' }]);
+
+      const session = await createSession({
+        cwd,
+        model: 'test/scripted',
+        mode: 'auto',
+        registry: model.registry,
+      });
+      await drain(session.agent.runTurn('hi', signal()));
+      await session.dispose();
+
+      expect(model.requests[0]?.reasoningEffort).toBe('medium');
+    });
+  });
+
+  test('sends no reasoning parameter at all when turned off', async () => {
+    await inSandbox(async (cwd) => {
+      await settings(cwd, {
+        thinking: { 'test/scripted': false },
+        reasoningEfforts: { 'test/scripted': 'high' },
+      });
+      const model = scripted([{ text: 'ok' }]);
+      // The catalog claiming the model reasons is exactly the case that breaks:
+      // without the override, `high` would be sent to a provider that rejects it.
+      model.model.model.capabilities.reasoning = true;
+
+      const session = await createSession({
+        cwd,
+        model: 'test/scripted',
+        mode: 'auto',
+        registry: model.registry,
+      });
+      await drain(session.agent.runTurn('hi', signal()));
+      await session.dispose();
+
+      expect(model.requests[0]?.reasoningEffort).toBeUndefined();
+    });
+  });
+
+  test('without an override the catalog still decides', async () => {
+    await inSandbox(async (cwd) => {
+      await settings(cwd, { reasoningEfforts: { 'test/scripted': 'high' } });
+      const model = scripted([{ text: 'ok' }]);
+
+      const session = await createSession({
+        cwd,
+        model: 'test/scripted',
+        mode: 'auto',
+        registry: model.registry,
+      });
+      await drain(session.agent.runTurn('hi', signal()));
+      await session.dispose();
+
+      expect(model.requests[0]?.reasoningEffort).toBeUndefined();
+    });
+  });
+});

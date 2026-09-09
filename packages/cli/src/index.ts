@@ -8,6 +8,7 @@ import { headlessCommand } from './commands/headless.ts';
 import { interactiveCommand } from './commands/interactive.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { modelsCommand } from './commands/models.ts';
+import { poolCommand } from './commands/pool.ts';
 import { sessionsCommand } from './commands/sessions.ts';
 import { updateCommand } from './commands/update.ts';
 
@@ -60,6 +61,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === 'mcp') return mcpCommand(args);
   if (command === 'extensions') return extensionsCommand(args);
   if (command === 'auth') return authCommand(args);
+  if (command === 'pool') return poolCommand(args);
   if (command === 'doctor') return doctorCommand(args);
   if (command === 'update') return updateCommand(args);
   if (command === 'sessions') return sessionsCommand(args);

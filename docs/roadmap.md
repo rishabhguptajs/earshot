@@ -12,7 +12,7 @@ and Windows, `Bun.build` bundling, `earshot --version`.
 
 - Unified message, request and stream-event types
 - One bridge to the AI SDK's `LanguageModelV4` spec, shared by every adapter
-- 7 wire adapters, 19 providers, 896 models
+- 7 wire adapters, 21 providers, 1,048 models
 - models.dev catalog, pruned at build time; live refresh
 - Auth store (`0600`, atomic) and the CLI → env → file → ambient resolution order
 - Cost accounting including prompt caching

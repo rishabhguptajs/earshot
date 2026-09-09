@@ -2,7 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { access, constants, readFile, stat } from 'node:fs/promises';
 import { homedir, platform, release } from 'node:os';
 import { dirname, join } from 'node:path';
-import { resolveShell, ShellNotFoundError, VERSION } from '@earshot/core';
+import { loadSettings, resolveShell, ShellNotFoundError, VERSION } from '@earshot/core';
+import { buildRegistry, openrouterFreeModels, POOL_PROVIDER_ID } from '@earshot/providers';
 import type { ParsedArgs } from '../args.ts';
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail';
@@ -130,6 +131,9 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
     if (check) checks.push(check);
   }
 
+  const model = await modelCheck(cwd);
+  if (model) checks.push(model);
+
   checks.unshift({ name: 'earshot', status: 'pass', detail: VERSION });
   return checks;
 }
@@ -147,4 +151,52 @@ export async function doctorCommand(_args: ParsedArgs): Promise<number> {
     `\n${failed === 0 ? 'ready' : 'not ready'}: ${failed} failed, ${warnings} warnings\n`,
   );
   return failed === 0 ? 0 : 1;
+}
+
+/**
+ * Whether the configured default model still exists.
+ *
+ * Free model listings churn on a timescale of days, and a `defaultModel`
+ * pointing at a retired one fails on the first turn of every session with an
+ * error that says nothing about where the bad reference came from. This is the
+ * cheapest place to find that out - and the case is not hypothetical: three
+ * `:free` OpenRouter models named by a five-day-old catalog snapshot had
+ * already ceased to exist, one of them somebody's saved default.
+ */
+async function modelCheck(cwd: string): Promise<DoctorCheck | undefined> {
+  const settings = await loadSettings(cwd).catch(() => undefined);
+  const ref = settings?.defaultModel;
+  if (!ref) return undefined;
+
+  const registry = buildRegistry({
+    ...(settings?.pool.endpoints?.length ? { custom: settings.pool.endpoints } : {}),
+  });
+  // The pool's own tiers are not catalog entries; that they resolve at all is
+  // what `earshot pool status` reports, and it needs credentials to say so.
+  if (ref.startsWith(`${POOL_PROVIDER_ID}/`)) {
+    return { name: 'default model', status: 'pass', detail: `${ref} (free pool)` };
+  }
+
+  // OpenRouter's free listing is the one the catalog is reliably wrong about,
+  // and the one most likely to be sitting in someone's `defaultModel`. The
+  // cached live listing is consulted, never fetched: `doctor` contacts nothing.
+  if (ref.startsWith('openrouter/')) {
+    const free = await openrouterFreeModels({ cachedOnly: true });
+    const id = ref.slice('openrouter/'.length);
+    if (free.length > 0 && ref.includes(':free') && !free.some((one) => one.id === id)) {
+      return {
+        name: 'default model',
+        status: 'warn',
+        detail: `"${ref}" is no longer free on OpenRouter - run \`/model\` to pick another`,
+      };
+    }
+  }
+
+  return registry.resolveModel(ref)
+    ? { name: 'default model', status: 'pass', detail: ref }
+    : {
+        name: 'default model',
+        status: 'warn',
+        detail: `"${ref}" is no longer in the catalog - run \`earshot models\` and \`/model\` to pick another`,
+      };
 }

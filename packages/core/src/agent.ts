@@ -61,6 +61,12 @@ import { detectTestCommand, runVerification, type VerificationResult } from './v
 /** Everything the TUI and the headless renderer need to show a turn. */
 export type AgentEvent =
   | { type: 'model_start'; model: string }
+  /**
+   * The pool moved to a different provider. Reported rather than hidden: a
+   * session that silently changed model halfway is one where odd output has no
+   * explanation, and the transcript should say which model actually answered.
+   */
+  | { type: 'model_switch'; model: string; reason: string }
   | { type: 'text_delta'; text: string }
   | { type: 'reasoning_delta'; text: string }
   | { type: 'message'; message: Message }
@@ -91,6 +97,14 @@ export type AgentEvent =
 export interface AgentOptions {
   registry: ProviderRegistry;
   model: ResolvedModel;
+  /**
+   * Model for earshot's own calls - compaction and subagents - rather than the
+   * user's turn. These are high-volume and low-stakes, so a pooled session
+   * points them at a cheaper free tier and keeps the good models' quota for the
+   * conversation. Absent means "use the session model", which is the old
+   * behaviour and stays the behaviour for anyone not pooling.
+   */
+  internalModel?: ResolvedModel;
   reasoningEffort?: ReasoningEffort;
   cwd: string;
   system: string;
@@ -252,6 +266,11 @@ export class Agent {
   /** The model this session is currently calling. */
   get model(): ResolvedModel {
     return this.resolved;
+  }
+
+  /** Where compaction and subagents run. The session model unless pooled. */
+  private get internalModel(): ResolvedModel {
+    return this.options.internalModel ?? this.resolved;
   }
 
   get reasoningEffort(): ReasoningEffort | undefined {
@@ -464,7 +483,7 @@ export class Agent {
     });
 
     const maxSteps = this.options.maxSteps ?? DEFAULT_MAX_STEPS;
-    const modelName = `${this.resolved.provider.id}/${this.resolved.model.id}`;
+    let modelName = `${this.resolved.provider.id}/${this.resolved.model.id}`;
 
     for (let step = 0; step < maxSteps; step++) {
       if (signal.aborted) {
@@ -516,6 +535,24 @@ export class Agent {
             const costUsd = turnCost(this.resolved.model, event.usage);
             this.addCost(costUsd);
             yield { type: 'usage', usage: event.usage, costUsd };
+            break;
+          }
+          case 'switched': {
+            // The resolved model is updated in place so cost, the status line
+            // and the next `model_start` all name what is really answering.
+            const swapped = this.resolved.pool?.candidates.find(
+              (one) => one.provider.id === event.providerId && one.model.id === event.modelId,
+            );
+            if (swapped) {
+              this.resolved = {
+                ...this.resolved,
+                provider: swapped.provider,
+                model: swapped.model,
+                credentials: swapped.credentials,
+              };
+            }
+            modelName = `${event.providerId}/${event.modelId}`;
+            yield { type: 'model_switch', model: modelName, reason: event.reason };
             break;
           }
           case 'error':
@@ -1007,7 +1044,7 @@ export class Agent {
   /** One extra model call, with no tools: the summary that compaction stands on. */
   private async summarise(messages: Message[], signal: AbortSignal): Promise<string> {
     let text = '';
-    for await (const event of streamModel(this.options.registry, this.resolved, {
+    for await (const event of streamModel(this.options.registry, this.internalModel, {
       system: SUMMARY_PROMPT,
       messages: [...messages, { role: 'user', content: [{ type: 'text', text: SUMMARY_PROMPT }] }],
       ...(this.effort ? { reasoningEffort: this.effort } : {}),
@@ -1084,6 +1121,7 @@ export class Agent {
 
     const child = new Agent({
       ...inherited,
+      model: this.internalModel,
       system:
         // The plan travels with it: a subagent working outside the plan the user
         // approved is the same hole as one working outside the declared scope.

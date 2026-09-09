@@ -63,11 +63,20 @@ export interface OnboardingOptions {
   /** One minimal live call. The only thing that proves a credential works. */
   probe(providerId: string, modelId: string): Promise<ProbeResult>;
   reasoningFor?(model: string): ReasoningEffort | undefined;
+  /** Returns the settings file written, so the caller can say where it went. */
   remember?(
     model: string,
     effort: ReasoningEffort | undefined,
     scope: 'global' | 'project',
-  ): Promise<void>;
+  ): Promise<string | undefined>;
+  /** Whether reasoning is forced on or off for a model, overriding the catalog. */
+  thinkingFor?(model: string): boolean | undefined;
+  /** Records a thinking override; `undefined` hands the decision back to the catalog. */
+  rememberThinking?(
+    model: string,
+    on: boolean | undefined,
+    scope: 'global' | 'project',
+  ): Promise<string | undefined>;
 }
 
 export interface OnboardingResult {
@@ -87,6 +96,12 @@ type Screen =
   | { name: 'probing'; provider: OnboardingProvider; model: OnboardingModel }
   | { name: 'effort'; provider: OnboardingProvider; model: OnboardingModel }
   | {
+      name: 'scope';
+      provider: OnboardingProvider;
+      model: OnboardingModel;
+      effort?: ReasoningEffort;
+    }
+  | {
       name: 'failed';
       provider: OnboardingProvider;
       model: OnboardingModel;
@@ -100,6 +115,11 @@ export interface OnboardingProps extends OnboardingOptions {
 }
 
 const EFFORTS = ['auto', 'none', 'low', 'medium', 'high', 'xhigh'] as const;
+
+const SCOPES = [
+  { scope: 'global', label: 'everywhere', hint: 'your config directory' },
+  { scope: 'project', label: 'this project only', hint: './.earshot/settings.json' },
+] as const;
 
 export function Onboarding({
   onDone,
@@ -155,14 +175,38 @@ export function Onboarding({
     [defaultScope, finish],
   );
 
+  /**
+   * Where a choice is saved is a decision, not a default.
+   *
+   * The picker used to write project-scoped settings on `enter` and offer
+   * `ctrl+g`/`g` - two different bindings for one action - as the only way to
+   * save globally. Nothing said which had happened, so a model chosen in one
+   * directory quietly reverted to the stale global default in every other one.
+   * Now the scope is asked for, with `defaultScope` deciding only where the
+   * cursor starts.
+   */
+  const askScope = useCallback(
+    (provider: OnboardingProvider, model: OnboardingModel, effort?: ReasoningEffort) => {
+      // First-run onboarding has no scope to choose: the caller stores globally,
+      // because there is not yet a project to prefer.
+      if (!embedded) {
+        complete(provider, model, 'global', effort);
+        return;
+      }
+      setCursor(defaultScope === 'project' ? 1 : 0);
+      setScreen({ name: 'scope', provider, model, ...(effort ? { effort } : {}) });
+    },
+    [complete, defaultScope, embedded],
+  );
+
   const readyForEffort = useCallback(
     (provider: OnboardingProvider, model: OnboardingModel) => {
       const remembered = options.current.reasoningFor?.(`${provider.id}/${model.id}`);
       setCursor(remembered ? Math.max(0, EFFORTS.indexOf(remembered)) : 0);
       if (model.reasoning) setScreen({ name: 'effort', provider, model });
-      else complete(provider, model);
+      else askScope(provider, model);
     },
-    [complete],
+    [askScope],
   );
 
   const verify = useCallback(
@@ -266,16 +310,6 @@ export function Onboarding({
         return;
       }
       const matches = matchingModels(screen.provider.models, input);
-      if (embedded && meta.ctrl && key === 'g') {
-        const selected = matches[cursor];
-        if (selected) {
-          if (selected.reasoning) {
-            setCursor(0);
-            setScreen({ name: 'effort', provider: screen.provider, model: selected });
-          } else complete(screen.provider, selected, 'global');
-        }
-        return;
-      }
       if (meta.upArrow) setCursor((c) => (c <= 0 ? Math.max(0, matches.length - 1) : c - 1));
       if (meta.downArrow) setCursor((c) => (c >= matches.length - 1 ? 0 : c + 1));
       return;
@@ -289,13 +323,26 @@ export function Onboarding({
       if (meta.upArrow) setCursor((c) => (c <= 0 ? EFFORTS.length - 1 : c - 1));
       if (meta.downArrow) setCursor((c) => (c >= EFFORTS.length - 1 ? 0 : c + 1));
       const selected = EFFORTS[cursor] ?? 'auto';
-      if (meta.return || (embedded && key === 'g')) {
-        complete(
-          screen.provider,
-          screen.model,
-          embedded && key === 'g' ? 'global' : defaultScope,
-          selected === 'auto' ? undefined : selected,
-        );
+      if (meta.return) {
+        askScope(screen.provider, screen.model, selected === 'auto' ? undefined : selected);
+      }
+      return;
+    }
+    if (screen.name === 'scope') {
+      if (meta.escape) {
+        // Back to whichever screen actually got us here.
+        if (screen.model.reasoning) {
+          setCursor(EFFORTS.indexOf(screen.effort ?? 'auto'));
+          setScreen({ name: 'effort', provider: screen.provider, model: screen.model });
+        } else {
+          setCursor(preferredModelIndex(screen.provider.models, rest.wantedModel));
+          setScreen({ name: 'model', provider: screen.provider });
+        }
+        return;
+      }
+      if (meta.upArrow || meta.downArrow) setCursor((c) => (c === 0 ? 1 : 0));
+      if (meta.return) {
+        complete(screen.provider, screen.model, cursor === 1 ? 'project' : 'global', screen.effort);
       }
       return;
     }
@@ -493,9 +540,32 @@ export function Onboarding({
             </Text>
           ))}
         </Box>
-        <Text color={theme.muted}>
-          ↑↓ choose · enter use{embedded ? ' here · g use everywhere' : ''} · esc back
+        <Text color={theme.muted}>↑↓ choose · enter continue · esc back</Text>
+      </Box>
+    );
+
+  if (screen.name === 'scope')
+    return (
+      <Box flexDirection="column">
+        <Header embedded={embedded} />
+        <Text>
+          use {screen.provider.id}/{screen.model.id}
+          {screen.effort ? ` · ${screen.effort}` : ''} where?
         </Text>
+        <Box flexDirection="column" marginTop={1}>
+          {SCOPES.map((choice, index) => (
+            <Box key={choice.scope}>
+              <Text color={index === cursor ? theme.user : theme.muted}>
+                {index === cursor ? '› ' : '  '}
+                {choice.label.padEnd(18)}
+              </Text>
+              <Text color={theme.muted}>{choice.hint}</Text>
+            </Box>
+          ))}
+        </Box>
+        <Box marginTop={1}>
+          <Text color={theme.muted}>↑↓ choose · enter save · esc back</Text>
+        </Box>
       </Box>
     );
 

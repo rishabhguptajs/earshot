@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import type {
   Agent,
   CreatedSession,
@@ -40,6 +41,7 @@ import { StatusLine } from './components/status.tsx';
 import { TextInput } from './components/text-input.tsx';
 import { ToolBlock } from './components/tool-block.tsx';
 import { Onboarding, type OnboardingOptions, type OnboardingResult } from './onboarding.tsx';
+import { PoolSetup, type PoolSetupOptions } from './pool-setup.tsx';
 import { SessionPicker } from './sessions.tsx';
 import { theme } from './theme.ts';
 
@@ -65,11 +67,33 @@ export interface AppProps {
   /** Run immediately on start, for `earshot "do the thing"`. */
   initialPrompt?: UserPrompt;
   modelOptions?: OnboardingOptions;
+  poolOptions?: PoolOptionsBinding;
   onResume?: (path: string) => void;
 }
 
 let sequence = 0;
 const nextId = () => `item_${sequence++}`;
+
+/**
+ * Names the settings file a choice was written to.
+ *
+ * Silence here is what made `/model` feel broken: the picker saved into
+ * `./.earshot/settings.json` and said only `model: x`, so the same command run
+ * one directory over came back with the old model and no explanation.
+ */
+function savedTo(path: string | undefined): string {
+  if (!path) return '';
+  const home = homedir();
+  return ` · saved to ${path.startsWith(home) ? `~${path.slice(home.length)}` : path}`;
+}
+
+/** What the TUI needs to show and change the pool, with no provider code in it. */
+export interface PoolOptionsBinding {
+  /** Pre-rendered, because the TUI knows nothing about vendors or quotas. */
+  status(): Promise<string>;
+  setEnabled?(on: boolean): Promise<string | undefined>;
+  setup: PoolSetupOptions;
+}
 
 function promptLabel(prompt: UserPrompt): string {
   if (typeof prompt === 'string') return prompt;
@@ -83,6 +107,7 @@ export function App({
   model: initialModel,
   initialPrompt,
   modelOptions,
+  poolOptions,
   onResume,
 }: AppProps) {
   const { exit } = useApp();
@@ -105,6 +130,7 @@ export function App({
   const [showThinking, setShowThinking] = useState(true);
   const [activity, setActivity] = useState<'preparing' | 'thinking' | 'reasoning' | undefined>();
   const [choosingModel, setChoosingModel] = useState(false);
+  const [connectingPool, setConnectingPool] = useState(false);
   const [choosingReasoning, setChoosingReasoning] = useState(false);
   const [sessionChoices, setSessionChoices] = useState<
     Awaited<ReturnType<typeof listSessions>> | undefined
@@ -180,6 +206,18 @@ export function App({
           switch (event.type) {
             case 'model_start':
               setActivity('thinking');
+              break;
+            case 'model_switch':
+              // Dim, one line: the swap is worth knowing about and not worth
+              // interrupting the answer for.
+              setModel(event.model);
+              push({
+                kind: 'notice',
+                id: nextId(),
+                text: `↳ ${event.reason} · ${event.model}`,
+                color: theme.muted,
+              });
+              void session.recordConfiguration({ model: event.model });
               break;
             case 'text_delta':
               if (!reasoningFlushed && reasoningText.trim() !== '' && showThinking) {
@@ -348,7 +386,7 @@ export function App({
         controller.current = undefined;
       }
     },
-    [agent, push, showThinking],
+    [agent, push, showThinking, session.recordConfiguration],
   );
 
   const started = useRef(false);
@@ -638,12 +676,12 @@ export function App({
         // The system prompt names the model; leaving the old name in it would
         // tell the new model it is something else.
         await refreshSystemPrompt(agent, next, session.skills);
-        await modelOptions?.remember?.(next, effort, 'project');
+        const saved = await modelOptions?.remember?.(next, effort, 'global');
         await session.recordConfiguration({ model: next, reasoningEffort: effort ?? null });
         push({
           kind: 'notice',
           id: nextId(),
-          text: `model: ${next}${effort ? ` · ${effort}` : ''}`,
+          text: `model: ${next}${effort ? ` · ${effort}` : ''}${savedTo(saved)}`,
         });
       } catch (error) {
         push({
@@ -655,6 +693,60 @@ export function App({
       }
     },
     [agent, modelOptions, push, session],
+  );
+
+  /**
+   * `/pool` - what free capacity is left, or connect more without leaving.
+   *
+   * Quota is the budget in a pooled session, because cost is zero and stops
+   * being the number worth watching. Connecting mid-session matters for the
+   * same reason: the moment you want another provider is the moment you have
+   * just run out of the one you had.
+   */
+  const managePool = useCallback(
+    async (argument?: string) => {
+      const verb = argument?.trim().toLowerCase();
+      if (!poolOptions) {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: 'the pool is unavailable',
+          color: theme.warning,
+        });
+        return;
+      }
+      if (verb === 'setup') {
+        setConnectingPool(true);
+        return;
+      }
+      if (verb === 'on' || verb === 'off') {
+        const saved = await poolOptions.setEnabled?.(verb === 'on');
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `pool ${verb}${savedTo(saved)} - takes effect next session`,
+        });
+        return;
+      }
+      push({ kind: 'notice', id: nextId(), text: await poolOptions.status() });
+    },
+    [poolOptions, push],
+  );
+
+  const finishPoolSetup = useCallback(
+    (result: { connected: number }) => {
+      setConnectingPool(false);
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text:
+          result.connected === 0
+            ? 'nothing connected'
+            : `${result.connected} free ${result.connected === 1 ? 'account' : 'accounts'} ` +
+              'connected · /model free/best to switch this session to the pool',
+      });
+    },
+    [push],
   );
 
   const finishModelChoice = useCallback(
@@ -669,7 +761,11 @@ export function App({
         agent.setReasoningEffort(result.reasoningEffort);
         setModel(next);
         await refreshSystemPrompt(agent, next, session.skills);
-        await modelOptions?.remember?.(next, result.reasoningEffort, result.scope ?? 'project');
+        const saved = await modelOptions?.remember?.(
+          next,
+          result.reasoningEffort,
+          result.scope ?? 'global',
+        );
         await session.recordConfiguration({
           model: next,
           reasoningEffort: result.reasoningEffort ?? null,
@@ -677,7 +773,10 @@ export function App({
         push({
           kind: 'notice',
           id: nextId(),
-          text: `model: ${next}${result.reasoningEffort ? ` · ${result.reasoningEffort}` : ' · auto'}`,
+          text:
+            `model: ${next}` +
+            `${result.reasoningEffort ? ` · ${result.reasoningEffort}` : ' · auto'}` +
+            savedTo(saved),
         });
       } catch (error) {
         push({
@@ -697,39 +796,69 @@ export function App({
     async (argument?: string) => {
       const value = argument?.trim().toLowerCase();
       if (!value) {
-        if (!agent.model.model.capabilities.reasoning) {
+        if (!(modelOptions?.thinkingFor?.(model) ?? agent.model.model.capabilities.reasoning)) {
           push({
             kind: 'notice',
             id: nextId(),
-            text: `${agent.model.model.name} does not support reasoning`,
+            text:
+              `${agent.model.model.name} is not listed as supporting reasoning - ` +
+              '`/reasoning on` forces it anyway',
             color: theme.warning,
           });
         } else setChoosingReasoning(true);
         return;
       }
+      // `on`/`off` override what the catalog claims about the model; the effort
+      // levels say how hard it should think once it is allowed to.
+      if (value === 'on' || value === 'off') {
+        const on = value === 'on';
+        const effort = on ? (modelOptions?.reasoningFor?.(model) ?? 'medium') : undefined;
+        agent.setReasoningEffort(effort);
+        const saved = await modelOptions?.rememberThinking?.(model, on, 'global');
+        await session.recordConfiguration({ reasoningEffort: effort ?? null });
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text:
+            `reasoning: forced ${value} for ${model}` +
+            `${on && effort ? ` · ${effort}` : ''}${savedTo(saved)}`,
+        });
+        return;
+      }
+
       const effort = value === 'auto' ? undefined : (value as ReasoningEffort);
       if (value !== 'auto' && !['none', 'low', 'medium', 'high', 'xhigh'].includes(value)) {
         push({
           kind: 'notice',
           id: nextId(),
-          text: `unknown reasoning effort "${value}"`,
+          text: `unknown reasoning effort "${value}" - use on, off, auto, or a level`,
           color: theme.warning,
         });
         return;
       }
-      if (!agent.model.model.capabilities.reasoning && effort !== undefined) {
+      // The catalog is only the default here. Someone who has already said
+      // `/reasoning on` for this model has overruled it, and saying so again
+      // would be telling them their own setting does not exist.
+      const forced = modelOptions?.thinkingFor?.(model);
+      if (!(forced ?? agent.model.model.capabilities.reasoning) && effort !== undefined) {
         push({
           kind: 'notice',
           id: nextId(),
-          text: `${agent.model.model.name} does not support reasoning`,
+          text:
+            `${agent.model.model.name} is not listed as supporting reasoning - ` +
+            '`/reasoning on` forces it anyway',
           color: theme.warning,
         });
         return;
       }
       agent.setReasoningEffort(effort);
-      await modelOptions?.remember?.(model, effort, 'project');
+      const saved = await modelOptions?.remember?.(model, effort, 'global');
       await session.recordConfiguration({ reasoningEffort: effort ?? null });
-      push({ kind: 'notice', id: nextId(), text: `reasoning: ${effort ?? 'auto'}` });
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: `reasoning: ${effort ?? 'auto'}${savedTo(saved)}`,
+      });
     },
     [agent, model, modelOptions, push, session],
   );
@@ -738,7 +867,7 @@ export function App({
     async (effort: ReasoningEffort | undefined) => {
       setChoosingReasoning(false);
       agent.setReasoningEffort(effort);
-      await modelOptions?.remember?.(model, effort, 'project');
+      await modelOptions?.remember?.(model, effort, 'global');
       await session.recordConfiguration({ reasoningEffort: effort ?? null });
       push({ kind: 'notice', id: nextId(), text: `reasoning: ${effort ?? 'auto'}` });
     },
@@ -917,6 +1046,7 @@ export function App({
     undo: () => void undoLast(),
     plan: (argument) => void plan(argument),
     skills: () => push({ kind: 'notice', id: nextId(), text: describeExtensions(session) }),
+    pool: (argument) => void managePool(argument),
   };
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
@@ -1024,7 +1154,12 @@ export function App({
 
   // Input is disabled while a prompt is open so the two do not both consume keys.
   const inputActive =
-    !pending && !question && !choosingModel && !choosingReasoning && !sessionChoices;
+    !pending &&
+    !question &&
+    !choosingModel &&
+    !choosingReasoning &&
+    !connectingPool &&
+    !sessionChoices;
 
   // Open while the line is a bare command name being typed. A space means an
   // argument is being written, and the user has already chosen.
@@ -1089,6 +1224,9 @@ export function App({
     <Box flexDirection="column">
       <Static items={items}>{(item) => <ScrollRow key={item.id} item={item} />}</Static>
 
+      {connectingPool && poolOptions && (
+        <PoolSetup {...poolOptions.setup} embedded onDone={finishPoolSetup} />
+      )}
       {choosingModel && modelOptions && (
         <Onboarding
           {...modelOptions}

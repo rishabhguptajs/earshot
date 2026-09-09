@@ -46,6 +46,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     'mcp',
     'extensions',
     'config',
+    'pool',
     'models',
     'acp',
     'doctor',

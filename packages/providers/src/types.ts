@@ -145,6 +145,12 @@ export type StreamEvent =
       providerMetadata?: ProviderMetadata;
     }
   | { type: 'usage'; usage: Usage }
+  /**
+   * The pool moved to a different provider before this request. Emitted only by
+   * the router, and only at a point where no token has been sent yet, so a
+   * consumer can report which model is really answering.
+   */
+  | { type: 'switched'; providerId: string; modelId: string; reason: string }
   | {
       type: 'finish';
       reason: FinishReason;

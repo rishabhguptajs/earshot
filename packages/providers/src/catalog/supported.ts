@@ -15,6 +15,13 @@ export interface SupportedProvider {
   baseUrl?: string;
   /** Overrides the catalog's `env` list. */
   envVars?: string[];
+  /**
+   * Values other than the key that the base URL needs, named by environment
+   * variable. Cloudflare puts the account id in the path, so a key alone cannot
+   * address the endpoint; `${NAME}` in a base URL is filled from the stored
+   * credential first and the environment second.
+   */
+  extraEnv?: Array<{ name: string; label: string; hint?: string }>;
   auth?: 'api-key' | 'oauth' | 'ambient' | 'none';
   notice?: string;
 }
@@ -68,6 +75,33 @@ export const SUPPORTED_PROVIDERS: SupportedProvider[] = [
     baseUrl: 'https://api.deepinfra.com/v1/openai',
   },
   { id: 'nebius', catalogId: 'nebius', api: 'openai-completions' },
+  {
+    id: 'nvidia',
+    catalogId: 'nvidia',
+    api: 'openai-completions',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+  },
+  // Workers AI addresses an account, not just a key: the account id is a path
+  // segment. `${CLOUDFLARE_ACCOUNT_ID}` is expanded per credential at call time,
+  // and the env list is narrowed to the token so the account id is never
+  // mistaken for one.
+  {
+    id: 'cloudflare',
+    catalogId: 'cloudflare-workers-ai',
+    api: 'openai-completions',
+    // The placeholder is the point: it is expanded per credential by
+    // `expandBaseUrl`, and this is the spelling models.dev publishes.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: expanded at call time
+    baseUrl: 'https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1',
+    envVars: ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_API_KEY'],
+    extraEnv: [
+      {
+        name: 'CLOUDFLARE_ACCOUNT_ID',
+        label: 'Cloudflare account id',
+        hint: 'the 32-character id on your Workers & Pages overview page',
+      },
+    ],
+  },
   { id: 'llama', catalogId: 'llama', api: 'openai-completions' },
 
   // --- local runtimes -------------------------------------------------------

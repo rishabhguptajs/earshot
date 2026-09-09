@@ -58,13 +58,18 @@ const SPECS = [
   },
   {
     name: 'reasoning',
-    args: '[auto|none|low|medium|high|xhigh]',
-    summary: 'Show or change reasoning effort for the current model',
+    args: '[on|off|auto|none|low|medium|high|xhigh]',
+    summary: 'Change reasoning effort, or force reasoning on or off for this model',
   },
   {
     name: 'thinking',
     args: '[show|hide]',
     summary: 'Show or hide streamed model reasoning',
+  },
+  {
+    name: 'pool',
+    args: '[setup|on|off]',
+    summary: 'Show free-provider quota, or connect more providers',
   },
   {
     name: 'mode',

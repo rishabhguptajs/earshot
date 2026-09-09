@@ -8,6 +8,7 @@ earshot sessions                  browse chats saved for this directory
 earshot -p "<prompt>" [flags]     one headless turn
 earshot models [filter] [flags]   list the model catalog
 earshot auth <login|list|logout>  manage credentials
+earshot pool <setup|status|...>   pool free providers into one model
 earshot mcp <list|trust|untrust>  manage MCP servers
 earshot extensions <list|trust|untrust>  manage in-process extensions
 earshot acp [flags]               serve editor clients over ACP v1 on stdio
@@ -32,8 +33,15 @@ earshot update [--check]          update earshot to the latest release
 Plain `earshot` creates a new chat. `earshot sessions` or `/sessions` opens a searchable list
 for the current directory; `--continue` resumes the latest. In the TUI,
 `/model` and `/reasoning` open pickers, while arguments provide a fast path.
-Selections are remembered per project. `/thinking hide` hides streamed
-reasoning and `/thinking show` restores it.
+Choosing a model ends by asking where to keep it — everywhere, or this project
+only — and the confirmation names the settings file it wrote.
+
+`/reasoning on` and `/reasoning off` force reasoning for the current model
+regardless of what the catalog claims it supports, which is the way out when a
+provider rejects a reasoning parameter it is listed as accepting, or accepts one
+it is not. The other values set the effort. `/thinking hide` hides streamed
+reasoning and `/thinking show` restores it - it controls the display, not the
+request.
 
 Runs a single non-interactive turn and prints the response.
 
@@ -90,6 +98,59 @@ earshot auth logout groq                       # forget the stored one
 
 `logout` removes what is in `auth.json`. An environment variable still applies
 afterwards, and it says so.
+
+## `earshot pool`
+
+A dozen vendors give away real capacity, and any one of those free tiers is too
+small to code against. Pooled they are not - so `earshot pool setup` connects
+them once, and `free/best`, `free/fast` and `free/cheap` route across whatever
+is connected and still has quota.
+
+```bash
+earshot pool setup                 # the wizard: pick providers, paste keys
+earshot pool status                # what is connected, what is spent, when it resets
+earshot pool enable                # or disable
+earshot pool forget groq#work      # drop one account, or a whole provider
+earshot pool add-endpoint <id> <base-url> <model-id>...
+```
+
+Free tiers meter per **account**, not per key: a second key minted inside the
+same account draws down the same bucket. The wizard can hold several accounts
+per provider (`groq`, `groq#account-2`), each counted separately, but only
+genuinely different accounts add capacity.
+
+Cost is not the number to watch in a pooled session, because everything in it
+is free. Quota is, and `earshot pool status` is where you read it: requests used
+against each account's daily and per-minute limits, when a rate-limited one
+comes back, and which concrete model each `free/*` tier resolves to right now.
+
+Published limits are estimates - vendors change them, document them poorly, and
+apply them per model. earshot paces against the table, then narrows it from what
+actually happens: a 429 both parks that account and lowers the ceiling it
+believes in. Requests are counted locally, so a key also being used by another
+tool will be undercounted, and the 429 is what corrects it.
+
+Some free tiers are documented as using what you send to improve their models.
+Those are marked `trains on your data` in the wizard and in `pool status`, since
+earshot reads your source. They are not excluded - that is your call - but
+`"pool": { "excludeTrainingProviders": true }` in settings leaves them out.
+
+Two members are not just a key. **NVIDIA NIM** meters against signup credits
+rather than a daily request count, so there is no honest per-day figure to show -
+`pool status` reports what has been spent and lets the first 429 set the ceiling.
+**Cloudflare Workers AI** meters in *neurons* (10,000 a day free), and what one
+request costs depends on the model and the length of the turn; the wizard asks
+for your account id as well as a token, because Workers AI puts the account in
+the endpoint URL.
+
+Local runtimes (Ollama, LM Studio) join the pool as the floor: no key, no quota,
+and the only members that cannot be exhausted. They are reached once every
+metered account is spent.
+
+`add-endpoint` points earshot at any OpenAI-compatible URL. earshot ships no
+unofficial or reverse-engineered providers - they break constantly and can get
+your upstream account banned - so this is the door for anyone who wants one
+anyway.
 
 ## `earshot mcp`
 
@@ -160,7 +221,11 @@ provider id and the display name.
 Runs local diagnostics without contacting a model provider or printing secrets.
 It checks the earshot and Node versions, platform, Git, Bash (Git Bash on
 Windows), writable config/data locations, settings JSON, and POSIX auth-file
-permissions. `PASS` and `WARN` checks exit 0; any `FAIL` exits 1.
+permissions. It also checks that the configured `defaultModel` still exists —
+free model listings churn on a timescale of days, and a default pointing at a
+retired one fails on the first turn of every session with an error that says
+nothing about where the bad reference came from. `PASS` and `WARN` checks exit
+0; any `FAIL` exits 1.
 
 ## `earshot update`
 
@@ -249,8 +314,9 @@ Typed at the prompt during an interactive session.
 |---|---|
 | `/help` | List the commands you can type |
 | `/model [ref]` | Show the model in use, or switch to another for the rest of the session |
-| `/reasoning [auto\|none\|low\|medium\|high\|xhigh]` | Show or change reasoning effort for the current model |
+| `/reasoning [on\|off\|auto\|none\|low\|medium\|high\|xhigh]` | Change reasoning effort, or force reasoning on or off for this model |
 | `/thinking [show\|hide]` | Show or hide streamed model reasoning |
+| `/pool [setup\|on\|off]` | Show free-provider quota, or connect more providers |
 | `/mode <plan\|ask\|accept-edits\|auto\|yolo>` | Change the permission mode |
 | `/plan <task>` | Draft a plan in plan mode and write it to a file |
 | `/plan edit` | Open the plan in `$VISUAL`/`$EDITOR`, or print its path |
