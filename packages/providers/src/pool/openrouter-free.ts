@@ -48,12 +48,19 @@ export const freeListingFile = (): string => join(dataDir(), 'openrouter-free.js
  * answer than no pool, and the models in it are checked before use anyway.
  */
 export async function openrouterFreeModels(
-  opts: { now?: number; fetchImpl?: typeof fetch; path?: string } = {},
+  opts: {
+    now?: number;
+    fetchImpl?: typeof fetch;
+    path?: string;
+    /** Never reaches the network. For `doctor`, which promises not to. */
+    cachedOnly?: boolean;
+  } = {},
 ): Promise<Array<Model & { tier: FreeModel['tier'] }>> {
   const now = opts.now ?? Date.now();
   const path = opts.path ?? freeListingFile();
   const cached = await readCache(path);
-  if (cached && now - cached.fetchedAt < TTL_MS) return cached.models;
+  if (cached && (opts.cachedOnly || now - cached.fetchedAt < TTL_MS)) return cached.models;
+  if (opts.cachedOnly) return [];
 
   try {
     const models = await fetchFreeModels(opts.fetchImpl ?? fetch);

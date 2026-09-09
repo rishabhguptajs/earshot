@@ -213,7 +213,11 @@ provider id and the display name.
 Runs local diagnostics without contacting a model provider or printing secrets.
 It checks the earshot and Node versions, platform, Git, Bash (Git Bash on
 Windows), writable config/data locations, settings JSON, and POSIX auth-file
-permissions. `PASS` and `WARN` checks exit 0; any `FAIL` exits 1.
+permissions. It also checks that the configured `defaultModel` still exists —
+free model listings churn on a timescale of days, and a default pointing at a
+retired one fails on the first turn of every session with an error that says
+nothing about where the bad reference came from. `PASS` and `WARN` checks exit
+0; any `FAIL` exits 1.
 
 ## `earshot update`
 

@@ -9,6 +9,52 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 Nothing queued yet.
 
+## [0.5.0] - 2026-09-09
+
+### Added
+
+- **Free provider pool.** A dozen vendors give away real capacity, and any one
+  of those free tiers is too small to code against; pooled, they are not.
+  `earshot pool setup` connects them once, and `free/best`, `free/fast` and
+  `free/cheap` route across whatever is connected and still has quota.
+- Quota is paced locally, so a spent tier costs nothing rather than a failed
+  round trip. Published limits are treated as estimates: a 429 parks the account
+  and narrows the ceiling earshot believes in.
+- Several named accounts per provider, because free tiers meter per account -
+  a second key from the same login shares its bucket.
+- Failover retries the same account before moving on, and never switches
+  mid-stream: past the first token the step belongs to that model. Swaps are
+  announced, shown in the status line, and written to the transcript.
+- OpenRouter's free models are resolved live and filtered on price rather than
+  the `:free` suffix, which is neither necessary nor sufficient.
+- Local runtimes (Ollama, LM Studio) join as the floor of the pool: no key, no
+  quota, reached once every metered account is spent.
+- Free tiers documented as training on submitted data are marked as such in the
+  wizard and in `earshot pool status`, and can be excluded outright.
+- `earshot pool add-endpoint` points earshot at any OpenAI-compatible URL.
+  earshot ships no unofficial providers; this is the door for anyone who wants
+  one anyway.
+- `/pool` shows quota and connects providers without leaving a session.
+- `earshot doctor` now warns when the configured default model has been retired.
+
+### Changed
+
+- `/model` asks where to save the choice - everywhere, or this project only -
+  and the confirmation names the file it wrote. It previously wrote
+  project-scoped settings silently, so a model chosen in one directory reverted
+  to the stale global default in every other one, with nothing said about it.
+  The undocumented `ctrl+g` and `g` accelerators are gone.
+- Compaction and subagents run on `free/cheap` in a pooled session, keeping the
+  better tiers' quota for the conversation.
+
+### Fixed
+
+- `/reasoning on|off` forces reasoning for a model regardless of what the
+  catalog claims it supports. The catalog goes stale in both directions, and
+  `/reasoning` previously refused to act at all on a model it thought could not
+  reason - leaving no way out of a provider rejecting a parameter it is listed
+  as accepting.
+
 ## [0.4.2] - 2026-09-08
 
 ### Fixed

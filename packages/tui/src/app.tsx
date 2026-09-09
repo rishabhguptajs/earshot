@@ -386,7 +386,7 @@ export function App({
         controller.current = undefined;
       }
     },
-    [agent, push, showThinking],
+    [agent, push, showThinking, session.recordConfiguration],
   );
 
   const started = useRef(false);

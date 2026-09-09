@@ -182,6 +182,7 @@ describe('the pool setup wizard', () => {
       await settle(30);
       stdin.send('\r');
       await waitFor(stdout, '1 connected');
+      await settle(60);
 
       stdin.send('a');
       await waitFor(stdout, 'account-2');
@@ -241,6 +242,9 @@ describe('the pool setup wizard', () => {
       await settle(30);
       stdin.send('\r');
       await waitFor(stdout, '1 connected');
+      // The screen has rendered, but Ink's input handler still closes over the
+      // previous screen for a tick; a keypress in that gap is dropped.
+      await settle(60);
 
       stdin.send('d');
       await waitFor(stdout, 'earshot will use free/best');
