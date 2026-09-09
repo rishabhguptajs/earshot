@@ -1,16 +1,8 @@
 import { loadSettings, persistPool } from '@earshot/core';
-import {
-  AuthStore,
-  buildRegistry,
-  DEFAULT_ACCOUNT,
-  FREE_TIERS,
-  freeTier,
-  LOCAL_TIERS,
-  POOL_TIERS,
-  poolCandidates,
-  QuotaLedger,
-} from '@earshot/providers';
+import { AuthStore, freeTier } from '@earshot/providers';
+import { runPoolSetup } from '@earshot/tui';
 import type { ParsedArgs } from '../args.ts';
+import { buildPoolSetupOptions, poolStatusText } from '../pool-onboard.ts';
 
 /**
  * `earshot pool status|enable|disable|add-endpoint|forget`.
@@ -27,7 +19,11 @@ export async function poolCommand(args: ParsedArgs): Promise<number> {
   const [action = 'status'] = args.positionals;
   const cwd = process.cwd();
 
-  if (action === 'status') return status(cwd);
+  if (action === 'setup') return setup(cwd);
+  if (action === 'status') {
+    process.stdout.write(`${await poolStatusText(cwd)}\n`);
+    return 0;
+  }
   if (action === 'enable') return toggle(cwd, true);
   if (action === 'disable') return toggle(cwd, false);
   if (action === 'add-endpoint') return addEndpoint(cwd, args);
@@ -35,95 +31,31 @@ export async function poolCommand(args: ParsedArgs): Promise<number> {
 
   process.stderr.write(
     `earshot pool: unknown action "${action}".\n` +
-      'usage: earshot pool <status|enable|disable|add-endpoint|forget>\n',
+      'usage: earshot pool <setup|status|enable|disable|add-endpoint|forget>\n',
   );
   return 2;
 }
 
-/**
- * What is connected, what is left, and when the spent ones come back.
- *
- * Cost stops being the meaningful number in a pooled session - everything in it
- * is free - so quota is the budget, and this is where you read it.
- */
-async function status(cwd: string): Promise<number> {
-  const settings = await loadSettings(cwd);
-  const store = new AuthStore();
-  const ledger = new QuotaLedger();
-  const buckets = await ledger.read();
-  const now = Date.now();
-  const out: string[] = [];
-
-  out.push(settings.pool.enabled ? 'pool: on' : 'pool: off  (earshot pool enable)');
-  if (settings.pool.excludeTrainingProviders) {
-    out.push('excluding providers that train on submitted data');
-  }
-  out.push('');
-
-  let connected = 0;
-  for (const tier of FREE_TIERS) {
-    const local = LOCAL_TIERS.has(tier.providerId);
-    const accounts = await store.listAccounts(tier.providerId);
-    if (accounts.length === 0 && !local) {
-      out.push(`${tier.providerId.padEnd(16)} ${'-'.padEnd(30)} not connected`);
-      continue;
-    }
-    if (local) {
-      out.push(`${tier.providerId.padEnd(16)} ${'local'.padEnd(30)} no quota`);
-      continue;
-    }
-
-    for (const account of accounts) {
-      connected++;
-      const key = `${tier.providerId}#${account.account}`;
-      const bucket = buckets[key];
-      const label =
-        account.account === DEFAULT_ACCOUNT
-          ? tier.providerId
-          : `${tier.providerId}#${account.account}`;
-      out.push(
-        `${label.padEnd(16)} ${spend(bucket, tier.limits).padEnd(30)} ${when(bucket, now)}` +
-          (tier.trainsOnData ? '  · trains on your data' : ''),
-      );
-    }
+async function setup(cwd: string): Promise<number> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    process.stderr.write(
+      'earshot pool setup needs an interactive terminal.\n' +
+        'for scripts, use `earshot auth login <provider> --api-key <key>` and ' +
+        '`earshot pool enable`.\n',
+    );
+    return 2;
   }
 
-  if (connected === 0) {
-    out.push('', 'nothing is connected yet. run `earshot pool setup` to add a free provider.');
-  } else {
-    // Which concrete model each tier resolves to right now is the question
-    // "what am I actually running on?", and it is not answerable from the table.
-    const registry = buildRegistry();
-    out.push('');
-    for (const tier of POOL_TIERS) {
-      const candidates = await poolCandidates(registry, tier, { store });
-      const first = candidates[0];
-      out.push(
-        `free/${tier.padEnd(6)} ${first ? `${first.provider.id}/${first.model.id}` : 'nothing available'}` +
-          (candidates.length > 1 ? `  (+${candidates.length - 1} more)` : ''),
-      );
-    }
+  const result = await runPoolSetup(await buildPoolSetupOptions(cwd));
+  if (result.connected === 0) {
+    process.stdout.write('nothing was connected. run `earshot pool setup` when you are ready.\n');
+    return 0;
   }
-
-  process.stdout.write(`${out.join('\n')}\n`);
+  process.stdout.write(
+    `${result.connected} free ${result.connected === 1 ? 'account' : 'accounts'} connected. ` +
+      'earshot will use free/best - `earshot pool status` shows what is left.\n',
+  );
   return 0;
-}
-
-function spend(
-  bucket: { minute: { requests: number }; day: { requests: number } } | undefined,
-  limits: { rpm?: number; rpd?: number },
-): string {
-  const day = bucket?.day.requests ?? 0;
-  const minute = bucket?.minute.requests ?? 0;
-  const perDay = limits.rpd ? `${day}/${limits.rpd} today` : `${day} today`;
-  return limits.rpm ? `${perDay}, ${minute}/${limits.rpm} this min` : perDay;
-}
-
-function when(bucket: { cooldownUntil?: number } | undefined, now: number): string {
-  const until = bucket?.cooldownUntil;
-  if (!until || until <= now) return 'ready';
-  const minutes = Math.ceil((until - now) / 60_000);
-  return `rate limited, back in ${minutes}m`;
 }
 
 async function toggle(cwd: string, enabled: boolean): Promise<number> {

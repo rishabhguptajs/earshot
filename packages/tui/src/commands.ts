@@ -67,6 +67,11 @@ const SPECS = [
     summary: 'Show or hide streamed model reasoning',
   },
   {
+    name: 'pool',
+    args: '[setup|on|off]',
+    summary: 'Show free-provider quota, or connect more providers',
+  },
+  {
     name: 'mode',
     args: '<plan|ask|accept-edits|auto|yolo>',
     summary: 'Change the permission mode',

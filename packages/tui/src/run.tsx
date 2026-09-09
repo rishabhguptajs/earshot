@@ -1,8 +1,9 @@
 import { platform } from 'node:os';
 import type { CreatedSession, SessionInfo, UserPrompt } from '@earshot/core';
 import { render } from 'ink';
-import { App } from './app.tsx';
+import { App, type PoolOptionsBinding } from './app.tsx';
 import { Onboarding, type OnboardingOptions, type OnboardingResult } from './onboarding.tsx';
+import { PoolSetup, type PoolSetupOptions, type PoolSetupResult } from './pool-setup.tsx';
 import { SessionPicker } from './sessions.tsx';
 
 export interface RunTuiOptions {
@@ -10,6 +11,7 @@ export interface RunTuiOptions {
   model: string;
   initialPrompt?: UserPrompt;
   modelOptions?: OnboardingOptions;
+  poolOptions?: PoolOptionsBinding;
 }
 
 export interface RunTuiResult {
@@ -45,6 +47,7 @@ export async function runTui(options: RunTuiOptions): Promise<RunTuiResult> {
       model={options.model}
       {...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {})}
       {...(options.modelOptions ? { modelOptions: options.modelOptions } : {})}
+      {...(options.poolOptions ? { poolOptions: options.poolOptions } : {})}
       onResume={(path) => {
         resumePath = path;
       }}
@@ -114,4 +117,27 @@ export async function runSessionPicker(
   );
   await instance.waitUntilExit();
   return selected;
+}
+
+/** `earshot pool setup`: the wizard on its own, outside a session. */
+export async function runPoolSetup(options: PoolSetupOptions): Promise<PoolSetupResult> {
+  const isWindows = platform() === 'win32';
+  let result: PoolSetupResult = { outcome: 'quit', connected: 0 };
+
+  const instance = render(
+    <PoolSetup
+      {...options}
+      onDone={(decided) => {
+        result = decided;
+      }}
+    />,
+    {
+      exitOnCtrlC: false,
+      patchConsole: true,
+      ...(isWindows ? { maxFps: WINDOWS_MAX_FPS } : {}),
+    },
+  );
+
+  await instance.waitUntilExit();
+  return result;
 }

@@ -41,6 +41,7 @@ import { StatusLine } from './components/status.tsx';
 import { TextInput } from './components/text-input.tsx';
 import { ToolBlock } from './components/tool-block.tsx';
 import { Onboarding, type OnboardingOptions, type OnboardingResult } from './onboarding.tsx';
+import { PoolSetup, type PoolSetupOptions } from './pool-setup.tsx';
 import { SessionPicker } from './sessions.tsx';
 import { theme } from './theme.ts';
 
@@ -66,6 +67,7 @@ export interface AppProps {
   /** Run immediately on start, for `earshot "do the thing"`. */
   initialPrompt?: UserPrompt;
   modelOptions?: OnboardingOptions;
+  poolOptions?: PoolOptionsBinding;
   onResume?: (path: string) => void;
 }
 
@@ -85,6 +87,14 @@ function savedTo(path: string | undefined): string {
   return ` · saved to ${path.startsWith(home) ? `~${path.slice(home.length)}` : path}`;
 }
 
+/** What the TUI needs to show and change the pool, with no provider code in it. */
+export interface PoolOptionsBinding {
+  /** Pre-rendered, because the TUI knows nothing about vendors or quotas. */
+  status(): Promise<string>;
+  setEnabled?(on: boolean): Promise<string | undefined>;
+  setup: PoolSetupOptions;
+}
+
 function promptLabel(prompt: UserPrompt): string {
   if (typeof prompt === 'string') return prompt;
   return prompt
@@ -97,6 +107,7 @@ export function App({
   model: initialModel,
   initialPrompt,
   modelOptions,
+  poolOptions,
   onResume,
 }: AppProps) {
   const { exit } = useApp();
@@ -119,6 +130,7 @@ export function App({
   const [showThinking, setShowThinking] = useState(true);
   const [activity, setActivity] = useState<'preparing' | 'thinking' | 'reasoning' | undefined>();
   const [choosingModel, setChoosingModel] = useState(false);
+  const [connectingPool, setConnectingPool] = useState(false);
   const [choosingReasoning, setChoosingReasoning] = useState(false);
   const [sessionChoices, setSessionChoices] = useState<
     Awaited<ReturnType<typeof listSessions>> | undefined
@@ -671,6 +683,60 @@ export function App({
     [agent, modelOptions, push, session],
   );
 
+  /**
+   * `/pool` - what free capacity is left, or connect more without leaving.
+   *
+   * Quota is the budget in a pooled session, because cost is zero and stops
+   * being the number worth watching. Connecting mid-session matters for the
+   * same reason: the moment you want another provider is the moment you have
+   * just run out of the one you had.
+   */
+  const managePool = useCallback(
+    async (argument?: string) => {
+      const verb = argument?.trim().toLowerCase();
+      if (!poolOptions) {
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: 'the pool is unavailable',
+          color: theme.warning,
+        });
+        return;
+      }
+      if (verb === 'setup') {
+        setConnectingPool(true);
+        return;
+      }
+      if (verb === 'on' || verb === 'off') {
+        const saved = await poolOptions.setEnabled?.(verb === 'on');
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `pool ${verb}${savedTo(saved)} - takes effect next session`,
+        });
+        return;
+      }
+      push({ kind: 'notice', id: nextId(), text: await poolOptions.status() });
+    },
+    [poolOptions, push],
+  );
+
+  const finishPoolSetup = useCallback(
+    (result: { connected: number }) => {
+      setConnectingPool(false);
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text:
+          result.connected === 0
+            ? 'nothing connected'
+            : `${result.connected} free ${result.connected === 1 ? 'account' : 'accounts'} ` +
+              'connected · /model free/best to switch this session to the pool',
+      });
+    },
+    [push],
+  );
+
   const finishModelChoice = useCallback(
     async (result: OnboardingResult) => {
       if (result.outcome === 'quit' || !result.model) {
@@ -968,6 +1034,7 @@ export function App({
     undo: () => void undoLast(),
     plan: (argument) => void plan(argument),
     skills: () => push({ kind: 'notice', id: nextId(), text: describeExtensions(session) }),
+    pool: (argument) => void managePool(argument),
   };
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
@@ -1075,7 +1142,12 @@ export function App({
 
   // Input is disabled while a prompt is open so the two do not both consume keys.
   const inputActive =
-    !pending && !question && !choosingModel && !choosingReasoning && !sessionChoices;
+    !pending &&
+    !question &&
+    !choosingModel &&
+    !choosingReasoning &&
+    !connectingPool &&
+    !sessionChoices;
 
   // Open while the line is a bare command name being typed. A space means an
   // argument is being written, and the user has already chosen.
@@ -1140,6 +1212,9 @@ export function App({
     <Box flexDirection="column">
       <Static items={items}>{(item) => <ScrollRow key={item.id} item={item} />}</Static>
 
+      {connectingPool && poolOptions && (
+        <PoolSetup {...poolOptions.setup} embedded onDone={finishPoolSetup} />
+      )}
       {choosingModel && modelOptions && (
         <Onboarding
           {...modelOptions}
