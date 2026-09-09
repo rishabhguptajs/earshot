@@ -170,6 +170,40 @@ describe('pool candidates', () => {
     const candidates = await poolCandidates(registry, 'best', { store, tiers: withGhost, env: {} });
     expect(candidates.map((c) => c.model.id)).toEqual(['openai/gpt-oss-120b']);
   });
+
+  /**
+   * Cloudflare's endpoint is built from the account id, so a stored key without
+   * one addresses nothing. It is skipped for the same reason a retired model is:
+   * the candidate list is what still works, and routing to it would fail the
+   * turn rather than degrade it.
+   */
+  test('an account whose endpoint cannot be built is skipped', async () => {
+    const store = await tempStore();
+    await store.setAccount('cloudflare', 'default', { type: 'api-key', apiKey: 'no-account-id' });
+    await store.setAccount('cloudflare', 'account-2', {
+      type: 'api-key',
+      apiKey: 'k',
+      extra: { CLOUDFLARE_ACCOUNT_ID: 'acct2' },
+    });
+
+    const cloudflare: FreeTier[] = [
+      {
+        providerId: 'cloudflare',
+        label: 'Cloudflare Workers AI',
+        signupUrl: 'https://dash.cloudflare.com',
+        limits: { rpd: 150 },
+        trainsOnData: false,
+        models: [{ id: '@cf/openai/gpt-oss-20b', tier: 'fast' }],
+      },
+    ];
+
+    const candidates = await poolCandidates(registry, 'fast', {
+      store,
+      tiers: cloudflare,
+      env: {},
+    });
+    expect(candidates.map((c) => c.account)).toEqual(['account-2']);
+  });
 });
 
 /**

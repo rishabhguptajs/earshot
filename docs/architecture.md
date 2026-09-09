@@ -80,7 +80,7 @@ export const anthropicWire = createAiSdkWire('anthropic-messages', (modelId, ctx
 
 Consequences worth being explicit about:
 
-- **Upside.** 7 adapters and 19 providers for roughly 400 lines. AWS SigV4 and
+- **Upside.** 7 adapters and 21 providers for roughly 400 lines. AWS SigV4 and
   Google ADC come free. New AI SDK providers are near-zero cost to adopt.
 - **Cost.** earshot inherits the AI SDK's spec and its bugs, and a spec bump
   (`V4` → `V5`) means updating the bridge.

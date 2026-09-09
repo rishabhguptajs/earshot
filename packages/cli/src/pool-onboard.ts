@@ -16,8 +16,10 @@ import {
   poolCandidates,
   QuotaLedger,
   type QuotaLimits,
+  SUPPORTED_PROVIDERS,
 } from '@earshot/providers';
 import type {
+  PoolExtraField,
   PoolOptionsBinding,
   PoolProviderOption,
   PoolSetupOptions,
@@ -38,6 +40,7 @@ export async function buildPoolSetupOptions(cwd = process.cwd()): Promise<PoolSe
   for (const tier of FREE_TIERS) {
     // Local runtimes have nothing to connect - no key, no account, no signup.
     if (LOCAL_TIERS.has(tier.providerId)) continue;
+    const extraFields = extraFieldsFor(tier.providerId);
     providers.push({
       id: tier.providerId,
       label: tier.label,
@@ -45,13 +48,20 @@ export async function buildPoolSetupOptions(cwd = process.cwd()): Promise<PoolSe
       limits: describeLimits(tier.limits),
       trainsOnData: tier.trainsOnData,
       accounts: (await store.listAccounts(tier.providerId)).map((one) => one.account),
+      // Cloudflare's endpoint names the account in its path, so the key alone
+      // is not a usable credential. The provider table is where that is known.
+      ...(extraFields ? { extraFields } : {}),
     });
   }
 
   return {
     providers,
-    storeKey: (providerId, account, key) =>
-      store.setAccount(providerId, account, { type: 'api-key', apiKey: key }),
+    storeKey: (providerId, account, key, extra) =>
+      store.setAccount(providerId, account, {
+        type: 'api-key',
+        apiKey: key,
+        ...(extra ? { extra } : {}),
+      }),
     forgetKey: (providerId, account) => store.removeAccount(providerId, account),
     probe: (providerId) => probe(providerId, store),
     openUrl: (url) => void openInBrowser(url),
@@ -77,6 +87,17 @@ export async function poolIsConnected(cwd = process.cwd()): Promise<boolean> {
   if (!settings.pool.enabled) return false;
   const registry = buildRegistry();
   return (await poolCandidates(registry, 'best')).length > 0;
+}
+
+/** The non-key values a provider's endpoint needs, if it has any. */
+function extraFieldsFor(providerId: string): PoolExtraField[] | undefined {
+  const entry = SUPPORTED_PROVIDERS.find((one) => one.id === providerId);
+  if (!entry?.extraEnv?.length) return undefined;
+  return entry.extraEnv.map((field) => ({
+    name: field.name,
+    label: field.label,
+    ...(field.hint ? { hint: field.hint } : {}),
+  }));
 }
 
 function describeLimits(limits: QuotaLimits): string {

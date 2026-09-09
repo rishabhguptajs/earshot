@@ -30,10 +30,10 @@ the things below. earshot exists because nothing gives you all three.
 
 ### 1. Every provider, and adding one is a config entry
 
-19 providers and 896 models ship in the box — Anthropic, OpenAI, Google, Bedrock,
+21 providers and 1,048 models ship in the box — Anthropic, OpenAI, Google, Bedrock,
 Vertex, Azure, OpenRouter, Groq, DeepSeek, xAI, Mistral, Together, Fireworks,
-Cerebras, DeepInfra, Nebius, Llama, LM Studio and Ollama — plus any
-OpenAI-compatible endpoint you point it at.
+Cerebras, DeepInfra, Nebius, NVIDIA, Cloudflare Workers AI, Llama, LM Studio and
+Ollama — plus any OpenAI-compatible endpoint you point it at.
 
 Adding a vendor is one line, because most vendors are OpenAI-compatible:
 
@@ -146,7 +146,7 @@ still change behaviour independently. If you hit a live-provider bug,
    │  providers  │   7 wire adapters
    └───┬─────────┘
        │
-  19 providers / 896 models
+  21 providers / 1,048 models
 ```
 
 Everything above the wire adapters speaks one set of types. Provider quirks that

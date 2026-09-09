@@ -7,7 +7,35 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 ## [Unreleased]
 
-Nothing queued yet.
+### Added
+
+- **NVIDIA NIM and Cloudflare Workers AI join the free pool.** Both are
+  OpenAI-compatible, so neither needed a wire adapter - only a provider-table
+  entry, a free-tier entry, and a catalog refresh that puts their models in the
+  pruned snapshot.
+- Provider base URLs may now carry `${NAME}` placeholders, filled per credential
+  and falling back to the environment. Cloudflare Workers AI puts the account id
+  in its path, which makes the endpoint a property of the *account* rather than
+  the provider - so two pooled Cloudflare accounts are two endpoints, and a
+  missing value fails at resolve time with the name of what is missing - exit 3,
+  like any other missing credential - instead of a 404 against a URL containing
+  a literal `${...}`. In the pool, an account that cannot address an endpoint is
+  skipped rather than routed to, the same as a model a vendor has retired.
+- `earshot pool setup` asks for the extra values an endpoint needs after the key,
+  shown as typed rather than as bullets: an account id is an identifier, not a
+  secret, and hiding it only stops you checking you pasted the right one. Nothing
+  is stored until every value is in hand.
+
+### Changed
+
+- Refreshed the vendored models.dev snapshot. `cerebras/gemma-4-31b` had been
+  retired and is replaced in the free table by `cerebras/qwen-3.8-27b`.
+
+### Not added
+
+- **GitHub Models.** It is being retired: both its catalog and inference
+  endpoints return HTTP 410 (`github_models_retirement_brownout`). Pooling it
+  would ship a provider that is scheduled to stop answering.
 
 ## [0.5.0] - 2026-09-09
 

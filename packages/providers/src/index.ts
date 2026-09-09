@@ -1,4 +1,5 @@
 export * from './auth.ts';
+export * from './base-url.ts';
 export * from './builtin.ts';
 export * from './catalog/index.ts';
 export * from './errors.ts';

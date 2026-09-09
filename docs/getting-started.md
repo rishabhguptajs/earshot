@@ -134,7 +134,7 @@ anthropic/claude-sonnet-5            1000k       $2/$10  reasoning vision
 openai/gpt-5.2                        400k    $1.75/$14  reasoning vision
 google/gemini-flash-lite-latest      1049k    $0.3/$2.5  reasoning vision
 ...
-896 models across 18 providers (catalog 2026-09-03)
+1048 models across 20 providers (catalog 2026-09-09)
 prices are USD per million tokens, input/output
 ```
 

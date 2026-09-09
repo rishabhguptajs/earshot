@@ -1,5 +1,6 @@
 import {
   type Credentials,
+  expandBaseUrl,
   isPoolTier,
   type Model,
   type ModelRequest,
@@ -12,6 +13,7 @@ import {
   poolCandidates,
   resolveCredentials,
   type StreamEvent,
+  templatedBaseUrl,
   type WireContext,
 } from '@earshot/providers';
 import { type RouterOptions, routePooled } from './pool/router.ts';
@@ -34,8 +36,17 @@ export const DEFAULT_MODEL = 'anthropic/claude-opus-5';
 export const POOL_DEFAULT_MODEL = `${POOL_PROVIDER_ID}/best`;
 
 export class MissingCredentialsError extends Error {
-  constructor(readonly provider: Provider) {
-    super(describeMissingAuth(provider));
+  /**
+   * `reason` covers the case where a key is present but the credential is still
+   * not usable - Cloudflare needs the account id its URL is built from. It is
+   * the same failure from the user's side: something is missing before a call
+   * can be made, and it should be said once, up front, not at request time.
+   */
+  constructor(
+    readonly provider: Provider,
+    reason?: string,
+  ) {
+    super(reason ?? describeMissingAuth(provider));
     this.name = 'MissingCredentialsError';
   }
 }
@@ -83,6 +94,17 @@ export async function resolveModel(
     ...(opts.env ? { env: opts.env } : {}),
   });
   if (!credentials) throw new MissingCredentialsError(found.provider);
+
+  // An endpoint that names the account cannot be built from a key alone. Failing
+  // here rather than at the wire is the difference between a message that says
+  // what to set and a 404 against a URL with a literal `${...}` in it.
+  if (templatedBaseUrl(found.provider.baseUrl)) {
+    try {
+      expandBaseUrl(found.provider.baseUrl ?? '', credentials, opts.env);
+    } catch (error) {
+      throw new MissingCredentialsError(found.provider, (error as Error).message);
+    }
+  }
 
   return { ...found, credentials };
 }
@@ -218,7 +240,9 @@ function streamOne(
 
   const ctx: WireContext = {
     credentials,
-    ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+    // Resolved per credential, not per provider: an endpoint that names the
+    // account in its path is a different URL for each pooled account.
+    ...(provider.baseUrl ? { baseUrl: expandBaseUrl(provider.baseUrl, credentials) } : {}),
   };
   return wire.stream(req, ctx);
 }

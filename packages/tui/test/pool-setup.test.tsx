@@ -64,6 +64,23 @@ const google: PoolProviderOption = {
   accounts: [],
 };
 
+/** A provider whose endpoint needs more than a key - Cloudflare's account id. */
+const cloudflare: PoolProviderOption = {
+  id: 'cloudflare',
+  label: 'Cloudflare Workers AI',
+  signupUrl: 'https://dash.cloudflare.com',
+  limits: 'free · 150 requests/day',
+  trainsOnData: false,
+  accounts: [],
+  extraFields: [
+    {
+      name: 'CLOUDFLARE_ACCOUNT_ID',
+      label: 'Cloudflare account id',
+      hint: 'on your overview page',
+    },
+  ],
+};
+
 interface Fixture extends Partial<PoolSetupOptions> {
   providers?: PoolProviderOption[];
 }
@@ -72,7 +89,12 @@ function withWizard(
   fixture: Fixture,
   run: (io: { stdout: FakeStdout; stdin: FakeStdin }) => Promise<void>,
 ) {
-  const stored: Array<{ providerId: string; account: string; key: string }> = [];
+  const stored: Array<{
+    providerId: string;
+    account: string;
+    key: string;
+    extra?: Record<string, string>;
+  }> = [];
   const forgotten: Array<{ providerId: string; account: string }> = [];
   const opened: string[] = [];
   const results: PoolSetupResult[] = [];
@@ -82,7 +104,8 @@ function withWizard(
     providers: fixture.providers ?? [groq, google],
     storeKey:
       fixture.storeKey ??
-      (async (providerId, account, key) => void stored.push({ providerId, account, key })),
+      (async (providerId, account, key, extra) =>
+        void stored.push({ providerId, account, key, ...(extra ? { extra } : {}) })),
     forgetKey:
       fixture.forgetKey ??
       (async (providerId, account) => void forgotten.push({ providerId, account })),
@@ -254,6 +277,87 @@ describe('the pool setup wizard', () => {
 
     expect(finished()).toBe(1);
     expect(results).toEqual([{ outcome: 'done', connected: 1 }]);
+  });
+
+  /**
+   * Cloudflare puts the account id in the URL, so a key on its own is not a
+   * credential at all - it is a login that will 404 on the first real turn.
+   */
+  test('asks for the extra values an endpoint needs and stores them with the key', async () => {
+    const { stored } = await withWizard({ providers: [cloudflare] }, async ({ stdout, stdin }) => {
+      await waitFor(stdout, 'Cloudflare Workers AI');
+      stdin.send('\r');
+      await waitFor(stdout, 'paste a free api key');
+      stdin.send('cf_token');
+      await settle(30);
+      stdin.send('\r');
+
+      await waitFor(stdout, 'Cloudflare account id');
+      expect(stdout.output).toContain('on your overview page');
+      await settle(60);
+      stdin.send('acct123');
+      await settle(30);
+      stdin.send('\r');
+      await waitFor(stdout, '1 connected');
+    });
+
+    expect(stored).toEqual([
+      {
+        providerId: 'cloudflare',
+        account: 'default',
+        key: 'cf_token',
+        extra: { CLOUDFLARE_ACCOUNT_ID: 'acct123' },
+      },
+    ]);
+  });
+
+  test('stores nothing until every value the endpoint needs is in hand', async () => {
+    const probed: string[] = [];
+    const { stored } = await withWizard(
+      {
+        providers: [cloudflare],
+        probe: async (id) => {
+          probed.push(id);
+          return { ok: true };
+        },
+      },
+      async ({ stdout, stdin }) => {
+        await waitFor(stdout, 'Cloudflare Workers AI');
+        stdin.send('\r');
+        await waitFor(stdout, 'paste a free api key');
+        stdin.send('cf_token');
+        await settle(30);
+        stdin.send('\r');
+        await waitFor(stdout, 'Cloudflare account id');
+        await settle(60);
+
+        // Backing out here must leave nothing behind: half a credential is a
+        // login that fails later from a file the user has no reason to open.
+        stdin.send('\u001B');
+        await waitFor(stdout, 'paste a free api key');
+        await settle(60);
+      },
+    );
+
+    expect(stored).toEqual([]);
+    expect(probed).toEqual([]);
+  });
+
+  test('the account id is shown as typed, unlike the key', async () => {
+    await withWizard({ providers: [cloudflare] }, async ({ stdout, stdin }) => {
+      await waitFor(stdout, 'Cloudflare Workers AI');
+      stdin.send('\r');
+      await waitFor(stdout, 'paste a free api key');
+      stdin.send('cf_token');
+      await settle(30);
+      expect(stdout.output).not.toContain('cf_token');
+      stdin.send('\r');
+
+      await waitFor(stdout, 'Cloudflare account id');
+      await settle(60);
+      stdin.send('acct123');
+      await waitFor(stdout, 'acct123');
+    });
   });
 
   test('quitting connects nothing', async () => {

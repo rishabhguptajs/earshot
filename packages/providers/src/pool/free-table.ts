@@ -74,7 +74,7 @@ export const FREE_TIERS: FreeTier[] = [
     trainsOnData: false,
     models: [
       { id: 'gpt-oss-120b', tier: 'best' },
-      { id: 'gemma-4-31b', tier: 'fast' },
+      { id: 'qwen-3.8-27b', tier: 'fast' },
     ],
   },
   {
@@ -119,6 +119,46 @@ export const FREE_TIERS: FreeTier[] = [
     live: 'openrouter-pricing',
     models: [],
     notice: 'free daily requests rise from 50 to 1000 once an account holds $10 of credit.',
+  },
+  {
+    providerId: 'nvidia',
+    label: 'NVIDIA NIM',
+    signupUrl: 'https://build.nvidia.com',
+    // NIM's hosted endpoints are free to call while an account has credits, and
+    // a new account is granted them on signup. Cloud credits are consumed rather
+    // than a request count reset daily, so there is no honest rpd to publish -
+    // the ledger learns the real ceiling from the 429 when it arrives.
+    limits: { rpm: 40 },
+    trainsOnData: false,
+    models: [
+      { id: 'deepseek-ai/deepseek-v4-pro-0813', tier: 'best' },
+      { id: 'moonshotai/kimi-k3', tier: 'best' },
+      { id: 'moonshotai/kimi-k2.6', tier: 'fast' },
+      { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', tier: 'fast' },
+      { id: 'openai/gpt-oss-20b', tier: 'cheap' },
+    ],
+    notice: 'hosted NIM endpoints draw on signup credits rather than a daily request count.',
+  },
+  {
+    providerId: 'cloudflare',
+    label: 'Cloudflare Workers AI',
+    signupUrl: 'https://dash.cloudflare.com/?to=/:account/ai/workers-ai',
+    // Workers AI meters in "neurons", not requests: the free allocation is
+    // 10,000 a day, and what one request costs depends on the model and the
+    // length of the turn. A coding turn is expensive in those terms, so the
+    // request estimate here is deliberately low - it is a pacing hint, and the
+    // ledger narrows it the first time Cloudflare says otherwise.
+    limits: { rpm: 30, rpd: 150 },
+    trainsOnData: false,
+    models: [
+      { id: '@cf/zai-org/glm-4.7-flash', tier: 'best' },
+      { id: '@cf/openai/gpt-oss-120b', tier: 'best' },
+      { id: '@cf/openai/gpt-oss-20b', tier: 'fast' },
+      { id: '@cf/ibm-granite/granite-4.0-h-micro', tier: 'cheap' },
+    ],
+    notice:
+      'the free tier is 10,000 neurons/day, which a long coding turn can spend quickly. ' +
+      'connecting it needs your account id as well as a token.',
   },
   {
     providerId: 'together',

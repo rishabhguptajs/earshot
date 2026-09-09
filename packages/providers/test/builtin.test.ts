@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { templatedBaseUrl } from '../src/base-url.ts';
 import { buildRegistry, customProvider } from '../src/builtin.ts';
 import { ModelCatalog } from '../src/catalog/index.ts';
 import { SUPPORTED_PROVIDERS } from '../src/catalog/supported.ts';
@@ -132,6 +133,19 @@ describe('the free-tier table', () => {
       }
     }
     expect(stale).toEqual([]);
+  });
+
+  /**
+   * A templated endpoint that nothing asks for is a login the wizard will store
+   * and the first turn will fail on, from a URL the user never sees.
+   */
+  test('every templated endpoint declares what it needs to be filled in', () => {
+    for (const entry of SUPPORTED_PROVIDERS) {
+      if (!templatedBaseUrl(entry.baseUrl)) continue;
+      const declared = new Set((entry.extraEnv ?? []).map((field) => field.name));
+      const needed = [...(entry.baseUrl ?? '').matchAll(/\$\{(\w+)\}/g)].map((m) => m[1] ?? '');
+      expect(needed.filter((name) => !declared.has(name))).toEqual([]);
+    }
   });
 
   test('every model it names can actually run an agent loop', () => {

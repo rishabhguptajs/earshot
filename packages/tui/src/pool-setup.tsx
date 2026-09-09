@@ -26,12 +26,30 @@ export interface PoolProviderOption {
   readonly trainsOnData: boolean;
   /** Account names already connected for this provider. */
   readonly accounts: readonly string[];
+  /**
+   * Values other than the key this provider needs before it can be called -
+   * Cloudflare's account id is part of its URL. Asked for after the key, and
+   * shown as typed: an account id is an identifier, not a secret, and hiding it
+   * would only stop the user checking they pasted the right one.
+   */
+  readonly extraFields?: readonly PoolExtraField[];
+}
+
+export interface PoolExtraField {
+  readonly name: string;
+  readonly label: string;
+  readonly hint?: string;
 }
 
 export interface PoolSetupOptions {
   providers: readonly PoolProviderOption[];
   /** Stores a key under a named account. The caller's `AuthStore`, never a second one. */
-  storeKey(providerId: string, account: string, key: string): Promise<void>;
+  storeKey(
+    providerId: string,
+    account: string,
+    key: string,
+    extra?: Record<string, string>,
+  ): Promise<void>;
   forgetKey(providerId: string, account: string): Promise<void>;
   /** One minimal live call. The only thing that proves a credential works. */
   probe(providerId: string): Promise<ProbeResult>;
@@ -49,6 +67,13 @@ export interface PoolSetupResult {
 type Screen =
   | { name: 'list' }
   | { name: 'key'; provider: PoolProviderOption; account: string }
+  | {
+      name: 'extra';
+      provider: PoolProviderOption;
+      account: string;
+      at: number;
+      values: Record<string, string>;
+    }
   | { name: 'probing'; provider: PoolProviderOption }
   | { name: 'failed'; provider: PoolProviderOption; result: Extract<ProbeResult, { ok: false }> }
   | { name: 'done'; savedTo?: string };
@@ -99,36 +124,82 @@ export function PoolSetup({ onDone, embedded = false, ...rest }: PoolSetupProps)
     [connected],
   );
 
+  /**
+   * Stores the credential and proves it works. Split out from the key screen
+   * because a provider whose endpoint names the account - Cloudflare - has more
+   * to ask before there is anything worth probing.
+   */
+  const connect = useCallback(
+    async (provider: PoolProviderOption, account: string, extra: Record<string, string>) => {
+      const key = secret.current.trim();
+      secret.current = '';
+      setInput('');
+      setError(undefined);
+      await options.current.storeKey(
+        provider.id,
+        account,
+        key,
+        Object.keys(extra).length ? extra : undefined,
+      );
+
+      setScreen({ name: 'probing', provider });
+      const result = await options.current.probe(provider.id);
+      if (result.ok) {
+        setConnected((current) => ({
+          ...current,
+          [provider.id]: [...(current[provider.id] ?? []), account],
+        }));
+        setScreen({ name: 'list' });
+        return;
+      }
+      // A key the provider refused is worse than no key: it fails again on every
+      // future launch, from a file the user has no reason to look in.
+      if (result.reason === 'rejected') {
+        await options.current.forgetKey(provider.id, account).catch(() => {});
+      }
+      setScreen({ name: 'failed', provider, result });
+    },
+    [],
+  );
+
   const submitKey = useCallback(async () => {
     if (screen.name !== 'key') return;
     const key = secret.current.trim();
-    secret.current = '';
-    setInput('');
     if (key === '') {
       setError('a key is needed, or press esc to go back');
       return;
     }
     setError(undefined);
     const { provider, account } = screen;
-    await options.current.storeKey(provider.id, account, key);
-
-    setScreen({ name: 'probing', provider });
-    const result = await options.current.probe(provider.id);
-    if (result.ok) {
-      setConnected((current) => ({
-        ...current,
-        [provider.id]: [...(current[provider.id] ?? []), account],
-      }));
-      setScreen({ name: 'list' });
+    // The key stays in the ref across the extra questions; nothing is stored
+    // until every value the endpoint needs has been collected.
+    if (provider.extraFields?.length) {
+      setInput('');
+      setScreen({ name: 'extra', provider, account, at: 0, values: {} });
       return;
     }
-    // A key the provider refused is worse than no key: it fails again on every
-    // future launch, from a file the user has no reason to look in.
-    if (result.reason === 'rejected') {
-      await options.current.forgetKey(provider.id, account).catch(() => {});
+    await connect(provider, account, {});
+  }, [connect, screen]);
+
+  const submitExtra = useCallback(async () => {
+    if (screen.name !== 'extra') return;
+    const fields = screen.provider.extraFields ?? [];
+    const field = fields[screen.at];
+    if (!field) return;
+    const value = input.trim();
+    if (value === '') {
+      setError(`${field.label} is needed, or press esc to go back`);
+      return;
     }
-    setScreen({ name: 'failed', provider, result });
-  }, [screen]);
+    setError(undefined);
+    const values = { ...screen.values, [field.name]: value };
+    setInput('');
+    if (screen.at + 1 < fields.length) {
+      setScreen({ ...screen, at: screen.at + 1, values });
+      return;
+    }
+    await connect(screen.provider, screen.account, values);
+  }, [connect, input, screen]);
 
   const complete = useCallback(async () => {
     const savedTo = await options.current.finish?.();
@@ -180,6 +251,29 @@ export function PoolSetup({ onDone, embedded = false, ...rest }: PoolSetupProps)
       return;
     }
 
+    if (screen.name === 'extra') {
+      if (meta.escape) {
+        // Back to the key screen, and the key goes with it: half a credential
+        // stored is a login that fails later for no visible reason.
+        secret.current = '';
+        setInput('');
+        setError(undefined);
+        setScreen({ name: 'key', provider: screen.provider, account: screen.account });
+        return;
+      }
+      if (meta.return) {
+        void submitExtra();
+        return;
+      }
+      if (meta.backspace || meta.delete) {
+        setInput((current) => current.slice(0, -1));
+        return;
+      }
+      if (meta.ctrl || meta.meta || meta.tab) return;
+      if (key) setInput((current) => current + key);
+      return;
+    }
+
     if (screen.name === 'failed' && (meta.escape || meta.return)) {
       setScreen({ name: 'list' });
       return;
@@ -205,6 +299,33 @@ export function PoolSetup({ onDone, embedded = false, ...rest }: PoolSetupProps)
           <Text color={theme.user}>{'> '}</Text>
           {/* Bullets, not the key: the value is in a ref and never rendered. */}
           <Text>{'•'.repeat(input.length)}</Text>
+          <Text inverse> </Text>
+        </Box>
+        {error ? <Text color={theme.warning}>{error}</Text> : null}
+        <Box marginTop={1}>
+          <Text color={theme.muted}>enter continue · esc back</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (screen.name === 'extra') {
+    const field = (screen.provider.extraFields ?? [])[screen.at];
+    return (
+      <Box flexDirection="column">
+        <Text>
+          {screen.provider.label} also needs your {field?.label ?? 'account details'}
+        </Text>
+        {field?.hint ? (
+          <Box marginTop={1}>
+            <Text color={theme.muted}>{field.hint}</Text>
+          </Box>
+        ) : null}
+        <Box marginTop={1}>
+          <Text color={theme.user}>{'> '}</Text>
+          {/* Shown as typed: this is an identifier, not a secret, and a
+              mistyped one is the likeliest reason the probe will fail. */}
+          <Text>{input}</Text>
           <Text inverse> </Text>
         </Box>
         {error ? <Text color={theme.warning}>{error}</Text> : null}

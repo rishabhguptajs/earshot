@@ -1,4 +1,5 @@
 import { AuthStore, DEFAULT_ACCOUNT, resolveCredentials } from '../auth.ts';
+import { expandBaseUrl, templatedBaseUrl } from '../base-url.ts';
 import type { ProviderRegistry } from '../registry.ts';
 import type { Credentials, Model, Provider } from '../types.ts';
 import { FREE_TIERS, type FreeTier, LOCAL_TIERS } from './free-table.ts';
@@ -174,6 +175,11 @@ export async function poolCandidates(
 
     for (const account of accounts) {
       const { account: name, ...credentials } = account;
+      // An account whose endpoint cannot be built is not a routable option -
+      // Cloudflare needs the account id its URL is made of. Skipped rather than
+      // fatal, exactly like a model the vendor has retired: the pool is a list
+      // of what still works.
+      if (!callable(entry.provider, credentials, opts.env)) continue;
       candidates.push({
         provider: entry.provider,
         model: entry.model,
@@ -191,6 +197,17 @@ export async function poolCandidates(
   // the only members that cannot be exhausted. They come last because they are
   // slower and usually weaker, not because they are less reliable.
   return [...candidates, ...(await localCandidates(registry, opts))];
+}
+
+/** Whether this credential is enough to build the provider's endpoint. */
+function callable(provider: Provider, credentials: Credentials, env?: NodeJS.ProcessEnv): boolean {
+  if (!templatedBaseUrl(provider.baseUrl)) return true;
+  try {
+    expandBaseUrl(provider.baseUrl ?? '', credentials, env);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

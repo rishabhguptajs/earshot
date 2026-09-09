@@ -135,6 +135,14 @@ Those are marked `trains on your data` in the wizard and in `pool status`, since
 earshot reads your source. They are not excluded - that is your call - but
 `"pool": { "excludeTrainingProviders": true }` in settings leaves them out.
 
+Two members are not just a key. **NVIDIA NIM** meters against signup credits
+rather than a daily request count, so there is no honest per-day figure to show -
+`pool status` reports what has been spent and lets the first 429 set the ceiling.
+**Cloudflare Workers AI** meters in *neurons* (10,000 a day free), and what one
+request costs depends on the model and the length of the turn; the wizard asks
+for your account id as well as a token, because Workers AI puts the account in
+the endpoint URL.
+
 Local runtimes (Ollama, LM Studio) join the pool as the floor: no key, no quota,
 and the only members that cannot be exhausted. They are reached once every
 metered account is spent.

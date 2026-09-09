@@ -1,6 +1,6 @@
 # Providers
 
-19 providers ship in the box. Model metadata — context windows, pricing,
+21 providers ship in the box. Model metadata — context windows, pricing,
 capabilities — comes from the [models.dev](https://models.dev) registry, pruned at
 build time to the providers earshot supports.
 
@@ -11,21 +11,23 @@ Run `earshot models` for the live list; the table below is the shape of it.
 | id | Name | Models | Credentials | Wire adapter |
 |---|---|---:|---|---|
 | `anthropic` | Anthropic | 14 | `ANTHROPIC_API_KEY` | `anthropic-messages` |
-| `openai` | OpenAI | 42 | `OPENAI_API_KEY` | `openai-responses` |
+| `openai` | OpenAI | 43 | `OPENAI_API_KEY` | `openai-responses` |
 | `google` | Google | 32 | `GOOGLE_API_KEY`<br>`GOOGLE_GENERATIVE_AI_API_KEY`<br>`GEMINI_API_KEY` | `google-generative-ai` |
-| `bedrock` | Amazon Bedrock | 123 | *ambient* | `bedrock-converse` |
+| `bedrock` | Amazon Bedrock | 153 | *ambient* | `bedrock-converse` |
 | `vertex` | Vertex | 43 | *ambient* | `google-vertex` |
-| `azure` | Azure | 83 | `AZURE_RESOURCE_NAME`<br>`AZURE_API_KEY` | `azure-openai` |
-| `openrouter` | OpenRouter | 357 | `OPENROUTER_API_KEY` | `openai-completions` |
+| `azure` | Azure | 84 | `AZURE_RESOURCE_NAME`<br>`AZURE_API_KEY` | `azure-openai` |
+| `openrouter` | OpenRouter | 358 | `OPENROUTER_API_KEY` | `openai-completions` |
 | `groq` | Groq | 12 | `GROQ_API_KEY` | `openai-completions` |
 | `deepseek` | DeepSeek | 3 | `DEEPSEEK_API_KEY` | `openai-completions` |
 | `xai` | xAI | 7 | `XAI_API_KEY` | `openai-completions` |
 | `mistral` | Mistral | 32 | `MISTRAL_API_KEY` | `openai-completions` |
 | `together` | Together AI | 38 | `TOGETHER_API_KEY` | `openai-completions` |
-| `fireworks` | Fireworks AI | 19 | `FIREWORKS_API_KEY` | `openai-completions` |
+| `fireworks` | Fireworks AI | 21 | `FIREWORKS_API_KEY` | `openai-completions` |
 | `cerebras` | Cerebras | 2 | `CEREBRAS_API_KEY` | `openai-completions` |
-| `deepinfra` | Deep Infra | 62 | `DEEPINFRA_API_KEY` | `openai-completions` |
+| `deepinfra` | Deep Infra | 63 | `DEEPINFRA_API_KEY` | `openai-completions` |
 | `nebius` | Nebius Token Factory | 17 | `NEBIUS_API_KEY` | `openai-completions` |
+| `nvidia` | Nvidia | 89 | `NVIDIA_API_KEY` | `openai-completions` |
+| `cloudflare` | Cloudflare Workers AI | 27 | `CLOUDFLARE_API_TOKEN`<br>`CLOUDFLARE_ACCOUNT_ID` | `openai-completions` |
 | `llama` | Llama | 7 | `LLAMA_API_KEY` | `openai-completions` |
 | `lmstudio` | LMStudio | 3 | *none* | `openai-completions` |
 | `ollama` | Ollama | live | *none* | `openai-completions` |
@@ -42,6 +44,11 @@ First match wins:
 3. **Auth file** — `~/.config/earshot/auth.json`, written atomically, mode `0600` on POSIX
 4. **Ambient credentials** — the AWS credential chain for Bedrock, Google
    Application Default Credentials for Vertex
+
+Cloudflare Workers AI is the one provider whose endpoint is not the same for
+everyone: the account id is a path segment, so `CLOUDFLARE_ACCOUNT_ID` is needed
+alongside the token. `earshot pool setup` asks for it and stores it with the key,
+which is also what lets two Cloudflare accounts be pooled separately.
 
 On Windows the config directory is `%APPDATA%\earshot`. Override it with
 `EARSHOT_CONFIG_DIR`.
@@ -64,7 +71,8 @@ A wire adapter is the only thing that speaks HTTP. Seven ship:
 | `openai-completions` | **Everything else** — every OpenAI-compatible vendor |
 
 `openai-completions` is the workhorse: OpenRouter, Groq, DeepSeek, xAI, Mistral,
-Together, Fireworks, Cerebras, DeepInfra, Nebius, Llama, LM Studio, Ollama, and
+Together, Fireworks, Cerebras, DeepInfra, Nebius, NVIDIA, Cloudflare Workers AI,
+Llama, LM Studio, Ollama, and
 any endpoint you hand a base URL. This is why adding a provider is usually a
 one-line change — see [Adding a provider](adding-a-provider.md).
 
