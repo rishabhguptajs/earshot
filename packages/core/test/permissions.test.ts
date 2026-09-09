@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decide, type PermissionMode } from '../src/permissions/engine.ts';
 import { matchesCommand, parseRule, type Rule, RuleSyntaxError } from '../src/permissions/rules.ts';
 import {
+  adoptPoolDefault,
   loadSettings,
   persistDefaultModel,
   persistReasoningEffort,
@@ -226,6 +227,41 @@ describe('preferences in settings', () => {
       expect(loaded.defaultModel).toBe('openai/gpt-5');
       expect(loaded.reasoningEfforts['openai/gpt-5']).toBe('medium');
       expect(loaded.curiosity).toBe('high');
+    }));
+
+  /**
+   * The bug this guards: the first-run picker saved `openrouter/x` into the
+   * project file, `pool setup` later wrote `free/best` into the global one,
+   * and narrowest-wins meant the pool was on and never used.
+   */
+  test('turning the pool on retargets a project default that would shadow it', () =>
+    withTempDir(async (dir) => {
+      await persistDefaultModel('openrouter/openrouter/free', 'project', dir);
+      await persistDefaultModel('openai/gpt-5', 'local', dir);
+
+      const { paths, replaced } = await adoptPoolDefault('free/best', dir);
+
+      const loaded = await loadSettings(dir);
+      expect(loaded.pool.enabled).toBe(true);
+      expect(loaded.defaultModel).toBe('free/best');
+      expect(replaced.map((one) => one.model)).toEqual([
+        'openrouter/openrouter/free',
+        'openai/gpt-5',
+      ]);
+      expect(paths).toHaveLength(3);
+      // Other preferences in the rewritten files survive.
+      expect(JSON.parse(await readFile(join(dir, '.earshot/settings.json'), 'utf8'))).toEqual({
+        defaultModel: 'free/best',
+      });
+    }));
+
+  test('turning the pool on leaves a project already on the pool alone', () =>
+    withTempDir(async (dir) => {
+      await persistDefaultModel('free/fast', 'project', dir);
+      const { paths, replaced } = await adoptPoolDefault('free/best', dir);
+      expect(replaced).toEqual([]);
+      expect(paths).toHaveLength(1);
+      expect((await loadSettings(dir)).defaultModel).toBe('free/fast');
     }));
 
   /**

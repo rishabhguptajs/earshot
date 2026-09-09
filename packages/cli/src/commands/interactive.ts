@@ -99,6 +99,7 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
       const tui = await runTui({
         session,
         model: `${session.agent.model.provider.id}/${session.agent.model.model.id}`,
+        ...(session.agent.model.pool ? { poolTier: session.agent.model.pool.tier } : {}),
         modelOptions: await buildOnboardingOptions(),
         poolOptions: await buildPoolBinding(process.cwd()),
         ...(initialPrompt !== '' || image

@@ -1,7 +1,7 @@
 import {
+  adoptPoolDefault,
   loadSettings,
   POOL_DEFAULT_MODEL,
-  persistDefaultModel,
   persistPool,
   resolveModel,
   streamModel,
@@ -65,10 +65,7 @@ export async function buildPoolSetupOptions(cwd = process.cwd()): Promise<PoolSe
     forgetKey: (providerId, account) => store.removeAccount(providerId, account),
     probe: (providerId) => probe(providerId, store),
     openUrl: (url) => void openInBrowser(url),
-    finish: async () => {
-      await persistPool({ enabled: true }, 'global', cwd);
-      return persistDefaultModel(POOL_DEFAULT_MODEL, 'global', cwd);
-    },
+    finish: async () => (await adoptPoolDefault(POOL_DEFAULT_MODEL, cwd)).paths.join(', '),
   };
 }
 
@@ -76,7 +73,13 @@ export async function buildPoolSetupOptions(cwd = process.cwd()): Promise<PoolSe
 export async function buildPoolBinding(cwd = process.cwd()): Promise<PoolOptionsBinding> {
   return {
     status: () => poolStatusText(cwd),
-    setEnabled: (on) => persistPool({ enabled: on }, 'global', cwd),
+    // On is more than a flag: a model saved into this project before the pool
+    // existed would otherwise keep winning, and the next session would start
+    // exactly where the last one did.
+    setEnabled: async (on) =>
+      on
+        ? (await adoptPoolDefault(POOL_DEFAULT_MODEL, cwd)).paths.join(', ')
+        : persistPool({ enabled: false }, 'global', cwd),
     setup: await buildPoolSetupOptions(cwd),
   };
 }

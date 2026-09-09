@@ -7,6 +7,31 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-09
+
+### Fixed
+
+- **Enabling the pool now actually switches sessions to it.** `loadSettings`
+  lets the narrowest scope win for `defaultModel`, so a model the first-run
+  picker had saved into `./.earshot/settings.json` kept beating the `free/best`
+  that `pool setup` wrote to the global file - the pool was on, seven providers
+  were connected, and every session still started on `openrouter/free`.
+  `earshot pool enable`, the wizard's finish and `/pool on` now rewrite every
+  scope that pins a model, and say which files they touched. `earshot doctor`
+  warns when it finds the pool on and a narrower file still pinning one.
+- The status line names the tier as well as the member serving it
+  (`free/best · groq/openai/gpt-oss-120b`), so a pooled session no longer looks
+  like a session on one vendor.
+- The free-tier table was checked against each vendor's live model list and
+  published limits: Groq's retired Llama endpoints are replaced by its Qwen 3.x
+  models and its limits corrected to 1,000 requests and 200k tokens a day;
+  Mistral's `devstral-medium-2507` is gone and `mistral-medium-latest` takes
+  its place; Cerebras and Together AI are dropped from the pool, Cerebras
+  because its trial credits now need a payment method on file and Together
+  because it withdrew its free tier. NVIDIA's hosted endpoints no longer meter credits, and the notice says so.
+
+## [0.5.0] - 2026-09-09
+
 ### Added
 
 - **NVIDIA NIM and Cloudflare Workers AI join the free pool.** Both are
@@ -37,7 +62,6 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
   endpoints return HTTP 410 (`github_models_retirement_brownout`). Pooling it
   would ship a provider that is scheduled to stop answering.
 
-## [0.5.0] - 2026-09-09
 
 ### Added
 

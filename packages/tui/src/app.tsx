@@ -64,6 +64,8 @@ export type ScrollItem =
 export interface AppProps {
   session: CreatedSession;
   model: string;
+  /** The `free/*` tier in use, when the session is pooled. */
+  poolTier?: string;
   /** Run immediately on start, for `earshot "do the thing"`. */
   initialPrompt?: UserPrompt;
   modelOptions?: OnboardingOptions;
@@ -105,6 +107,7 @@ function promptLabel(prompt: UserPrompt): string {
 export function App({
   session,
   model: initialModel,
+  poolTier: initialPoolTier,
   initialPrompt,
   modelOptions,
   poolOptions,
@@ -116,6 +119,10 @@ export function App({
   // State rather than the prop alone: `/model` swaps it mid-session, and the
   // status line and the system prompt both have to follow.
   const [model, setModel] = useState(initialModel);
+  // The status line names the member serving the request, which is the honest
+  // answer to "what is spending my quota" - but on its own it reads as if the
+  // pool were not in use at all. The tier is shown alongside so it is not.
+  const [poolTier, setPoolTier] = useState(initialPoolTier);
 
   const [items, setItems] = useState<ScrollItem[]>(() =>
     session.problems.map((problem) => ({
@@ -673,6 +680,7 @@ export function App({
         const effort = modelOptions?.reasoningFor?.(next);
         agent.setReasoningEffort(effort);
         setModel(next);
+        setPoolTier(resolved.pool?.tier);
         // The system prompt names the model; leaving the old name in it would
         // tell the new model it is something else.
         await refreshSystemPrompt(agent, next, session.skills);
@@ -760,6 +768,7 @@ export function App({
         const next = `${resolved.provider.id}/${resolved.model.id}`;
         agent.setReasoningEffort(result.reasoningEffort);
         setModel(next);
+        setPoolTier(resolved.pool?.tier);
         await refreshSystemPrompt(agent, next, session.skills);
         const saved = await modelOptions?.remember?.(
           next,
@@ -1331,7 +1340,7 @@ export function App({
       )}
 
       <StatusLine
-        model={model}
+        model={poolTier ? `free/${poolTier} · ${model}` : model}
         {...(agent.reasoningEffort ? { reasoningEffort: agent.reasoningEffort } : {})}
         mode={mode}
         costUsd={cost}

@@ -1,4 +1,4 @@
-import { loadSettings, persistPool } from '@earshot/core';
+import { adoptPoolDefault, loadSettings, POOL_DEFAULT_MODEL, persistPool } from '@earshot/core';
 import { AuthStore, freeTier } from '@earshot/providers';
 import { runPoolSetup } from '@earshot/tui';
 import type { ParsedArgs } from '../args.ts';
@@ -58,9 +58,25 @@ async function setup(cwd: string): Promise<number> {
   return 0;
 }
 
+/**
+ * Enabling also points `defaultModel` at the pool, in every scope that sets one.
+ * A project file pinning `openrouter/x` from before the pool existed would
+ * otherwise shadow the global `free/best`, and "pool enabled" would change
+ * nothing the user could see.
+ */
 async function toggle(cwd: string, enabled: boolean): Promise<number> {
-  const path = await persistPool({ enabled }, 'global', cwd);
-  process.stdout.write(`pool ${enabled ? 'enabled' : 'disabled'} in ${path}\n`);
+  if (!enabled) {
+    const path = await persistPool({ enabled }, 'global', cwd);
+    process.stdout.write(`pool disabled in ${path}\n`);
+    return 0;
+  }
+  const { paths, replaced } = await adoptPoolDefault(POOL_DEFAULT_MODEL, cwd);
+  process.stdout.write(`pool enabled in ${paths[0]} - sessions start on ${POOL_DEFAULT_MODEL}\n`);
+  for (const one of replaced) {
+    process.stdout.write(
+      `  ${one.path}: default model was ${one.model}, now ${POOL_DEFAULT_MODEL}\n`,
+    );
+  }
   return 0;
 }
 
