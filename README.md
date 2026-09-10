@@ -70,6 +70,8 @@ See [Listening](docs/listening.md) for how each of these is specified and tested
 
 ## Quick start
 
+Earshot offers anonymous telemetry only on an opt-in basis on first interactive run. See [TELEMETRY.md](TELEMETRY.md) for the exact schema and controls.
+
 > Requires **Node ≥ 22** for the npm package. Standalone releases embed their runtime.
 
 ```bash

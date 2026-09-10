@@ -18,6 +18,7 @@ import {
   type Skill,
   type SlashCommand,
 } from '../skills/discover.ts';
+import { loadTelemetryState, Telemetry } from '../telemetry.ts';
 import { BUILTIN_TOOLS } from '../tools/index.ts';
 import { skillTool } from '../tools/skill.ts';
 import type { Tool } from '../tools/types.ts';
@@ -257,6 +258,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(options.extraTools ?? []),
   ];
 
+  const telemetry = new Telemetry(await loadTelemetryState());
   const agentOptions: AgentOptions = {
     registry,
     model: resolved,
@@ -274,6 +276,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
     ...(sessionTools.length > BUILTIN_TOOLS.length ? { tools: sessionTools } : {}),
     ...(hooks.isEmpty ? {} : { hooks }),
     ...(shadow ? { shadow } : {}),
+    telemetry,
     ...(store ? { onMessage: (message) => void store?.appendMessage(message) } : {}),
     ...(store
       ? {
@@ -292,6 +295,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Crea
   };
 
   const agent = new Agent(agentOptions);
+  telemetry.emit('session_started', { provider: resolved.provider.id });
   // Replayed messages are pushed straight onto history rather than re-appended
   // through the store: they are already in the transcript, and writing them back
   // would duplicate every entry on each resume.

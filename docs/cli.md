@@ -14,6 +14,7 @@ earshot extensions <list|trust|untrust>  manage in-process extensions
 earshot acp [flags]               serve editor clients over ACP v1 on stdio
 earshot doctor                    diagnose the local setup
 earshot update [--check]          update earshot to the latest release
+earshot telemetry <enable|disable|status|reset>  manage anonymous telemetry
 ```
 
 ## Global flags
@@ -322,6 +323,7 @@ Typed at the prompt during an interactive session.
 | `/reasoning [on\|off\|auto\|none\|low\|medium\|high\|xhigh]` | Change reasoning effort, or force reasoning on or off for this model |
 | `/thinking [show\|hide]` | Show or hide streamed model reasoning |
 | `/pool [setup\|on\|off]` | Show free-provider quota, or connect more providers |
+| `/telemetry [enable\|disable\|status\|reset]` | Manage opt-in anonymous telemetry |
 | `/mode <plan\|ask\|accept-edits\|auto\|yolo>` | Change the permission mode |
 | `/plan <task>` | Draft a plan in plan mode and write it to a file |
 | `/plan edit` | Open the plan in `$VISUAL`/`$EDITOR`, or print its path |

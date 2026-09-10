@@ -41,6 +41,7 @@ import { persistRule } from './permissions/settings.ts';
 import { renderPlan } from './plan/index.ts';
 import { type ScopeConcern, ScopeContract, type ScopeOptions } from './scope/index.ts';
 import { narrow } from './skills/discover.ts';
+import type { Telemetry } from './telemetry.ts';
 import { BUILTIN_TOOLS, ToolRegistry } from './tools/index.ts';
 import { BackgroundJobs } from './tools/jobs.ts';
 import { DEFAULT_SUBAGENT_TOOLS } from './tools/task.ts';
@@ -162,6 +163,8 @@ export interface AgentOptions {
   confirmBudget?: (spentUsd: number, limitUsd: number) => Promise<number | undefined>;
   /** Steps a subagent this agent spawns may take. */
   subagentMaxSteps?: number;
+  /** Receives only allowlisted lifecycle and tool-name events. */
+  telemetry?: Telemetry;
 }
 
 const DEFAULT_MAX_STEPS = 100;
@@ -441,6 +444,7 @@ export class Agent {
           retryable: false,
         },
       };
+      this.options.telemetry?.emit('session_failed');
       yield { type: 'turn_end', reason: 'error' };
       return;
     }
@@ -487,6 +491,7 @@ export class Agent {
 
     for (let step = 0; step < maxSteps; step++) {
       if (signal.aborted) {
+        this.options.telemetry?.emit('session_failed');
         yield { type: 'turn_end', reason: 'aborted' };
         return;
       }
@@ -502,6 +507,7 @@ export class Agent {
       if (overrun) {
         yield overrun.event;
         if (overrun.stop) {
+          this.options.telemetry?.emit('session_failed');
           yield { type: 'turn_end', reason: 'budget' };
           return;
         }
@@ -565,10 +571,14 @@ export class Agent {
 
       if (failed) {
         yield { type: 'error', error: failed };
+        this.options.telemetry?.emit(
+          failed.kind === 'abort' ? 'session_completed' : 'session_failed',
+        );
         yield { type: 'turn_end', reason: failed.kind === 'abort' ? 'aborted' : 'error' };
         return;
       }
       if (!assistant) {
+        this.options.telemetry?.emit(signal.aborted ? 'session_completed' : 'session_failed');
         yield { type: 'turn_end', reason: signal.aborted ? 'aborted' : 'error' };
         return;
       }
@@ -605,6 +615,7 @@ export class Agent {
               continue;
             }
           }
+          this.options.telemetry?.emit('session_completed');
           yield { type: 'turn_end', reason: 'stop' };
           return;
         }
@@ -626,11 +637,13 @@ export class Agent {
       await this.append({ role: 'tool', content: results });
 
       if (signal.aborted) {
+        this.options.telemetry?.emit('session_failed');
         yield { type: 'turn_end', reason: 'aborted' };
         return;
       }
     }
 
+    this.options.telemetry?.emit('session_failed');
     yield { type: 'turn_end', reason: 'max_steps' };
   }
 
@@ -693,6 +706,7 @@ export class Agent {
       const tool = this.tools.get(call.toolName);
       if (tool?.readOnly) {
         yield { type: 'tool_start', call };
+        this.options.telemetry?.emit('tool_used', { tool: call.toolName });
         parallel.push({ index, promise: this.runOne(tool, call, signal) });
       }
     }
@@ -702,6 +716,7 @@ export class Agent {
       if (tool?.readOnly) continue;
       if (signal.aborted) break;
       yield { type: 'tool_start', call };
+      this.options.telemetry?.emit('tool_used', { tool: call.toolName });
       const part = await this.runOne(tool, call, signal);
       slots[index] = part;
       while (this.pending.length > 0) yield this.pending.shift() as AgentEvent;

@@ -72,6 +72,11 @@ const SPECS = [
     summary: 'Show free-provider quota, or connect more providers',
   },
   {
+    name: 'telemetry',
+    args: '[enable|disable|status|reset]',
+    summary: 'Manage opt-in anonymous telemetry',
+  },
+  {
     name: 'mode',
     args: '<plan|ask|accept-edits|auto|yolo>',
     summary: 'Change the permission mode',

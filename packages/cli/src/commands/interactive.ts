@@ -2,9 +2,11 @@ import {
   createSession,
   EmptyPoolError,
   isPermissionMode,
+  loadTelemetryState,
   MissingCredentialsError,
   NoSessionToResumeError,
   type PermissionMode,
+  setTelemetryEnabled,
   UnknownModelError,
 } from '@earshot/core';
 import type { ReasoningEffort } from '@earshot/providers';
@@ -33,6 +35,10 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
     );
     return 2;
   }
+
+  // Consent is asked once, before any session starts. A stored `false` is a
+  // durable decline, so users are never nagged again.
+  if ((await loadTelemetryState()) === undefined) await askTelemetryConsent();
 
   let mode: PermissionMode | undefined;
   const requested = flags['permission-mode'];
@@ -192,6 +198,27 @@ export async function interactiveCommand(args: ParsedArgs): Promise<number> {
       throw error;
     }
   }
+}
+
+async function askTelemetryConsent(): Promise<void> {
+  process.stdout.write(
+    '\nHelp improve Earshot?\n\n' +
+      'Earshot can send anonymous usage statistics to help us understand adoption and improve the project.\n\n' +
+      'We never collect prompts, source code, file contents, API keys, command arguments, repository URLs, or personally identifying information.\n' +
+      'You can disable telemetry at any time.\n\n' +
+      '  1  Enable anonymous telemetry\n  2  No thanks\n\nchoose [1/2]: ',
+  );
+  const answer = await new Promise<string>((resolve) => {
+    const onData = (chunk: Buffer) => {
+      process.stdin.off('data', onData);
+      process.stdin.pause();
+      resolve(chunk.toString('utf8').trim());
+    };
+    process.stdin.on('data', onData);
+    process.stdin.resume();
+  });
+  await setTelemetryEnabled(answer === '1');
+  process.stdout.write('\n');
 }
 
 function parseReasoningEffort(

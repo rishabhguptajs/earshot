@@ -7,6 +7,13 @@ project follows [Semantic Versioning](https://semver.org/) from its first releas
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-10
+
+### Added
+
+- Opt-in anonymous telemetry with strict payload allowlisting, CLI and TUI controls,
+  and a privacy-preserving Cloudflare Worker/D1 ingestion service.
+
 ## [0.5.1] - 2026-09-09
 
 ### Fixed

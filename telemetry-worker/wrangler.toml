@@ -1,0 +1,9 @@
+name = "earshot-telemetry"
+main = "src/index.ts"
+compatibility_date = "2026-09-10"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "earshot-telemetry"
+database_id = "1f453851-cc7c-460f-8bc1-7456174f7cbc"
+migrations_dir = "migrations"

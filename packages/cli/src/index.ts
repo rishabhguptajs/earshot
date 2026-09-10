@@ -10,6 +10,7 @@ import { mcpCommand } from './commands/mcp.ts';
 import { modelsCommand } from './commands/models.ts';
 import { poolCommand } from './commands/pool.ts';
 import { sessionsCommand } from './commands/sessions.ts';
+import { telemetryCommand } from './commands/telemetry.ts';
 import { updateCommand } from './commands/update.ts';
 
 const HELP = `earshot ${VERSION} - a terminal coding agent that actually listens
@@ -25,6 +26,7 @@ Usage
   earshot doctor               diagnose the local setup
   earshot update [--check]     update earshot to the latest release
   earshot sessions             browse and resume saved chats for this project
+  earshot telemetry <cmd>      manage opt-in anonymous telemetry
 
 Flags
   --model <provider/model>     model for this session
@@ -66,6 +68,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === 'update') return updateCommand(args);
   if (command === 'sessions') return sessionsCommand(args);
   if (command === 'acp') return acpCommand(args);
+  if (command === 'telemetry') return telemetryCommand(args);
   if (command) {
     process.stderr.write(`earshot: "${command}" is not implemented yet\n`);
     return 1;

@@ -17,14 +17,17 @@ import {
   isPermissionMode,
   listSessions,
   loadMemories,
+  loadTelemetryState,
   openInEditor,
   PERMISSION_MODES,
   PLAN_PROMPT,
   planPath,
   readPlan,
   refreshSystemPrompt,
+  resetTelemetryIdentity,
   saveMemory,
   savePlan,
+  setTelemetryEnabled,
 } from '@earshot/core';
 import type { ReasoningEffort } from '@earshot/providers';
 import { Box, Static, Text, useApp, useInput } from 'ink';
@@ -741,6 +744,49 @@ export function App({
     [poolOptions, push],
   );
 
+  const manageTelemetry = useCallback(
+    async (argument?: string) => {
+      const command = argument?.trim() || 'status';
+      if (command === 'enable') {
+        await setTelemetryEnabled(true);
+        push({ kind: 'notice', id: nextId(), text: 'anonymous telemetry enabled' });
+        return;
+      }
+      if (command === 'disable') {
+        await setTelemetryEnabled(false);
+        push({ kind: 'notice', id: nextId(), text: 'telemetry disabled' });
+        return;
+      }
+      if (command === 'reset') {
+        const state = await resetTelemetryIdentity();
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: state?.enabled
+            ? 'anonymous installation ID reset'
+            : 'telemetry is not enabled; no ID to reset',
+        });
+        return;
+      }
+      if (command === 'status') {
+        const state = await loadTelemetryState();
+        push({
+          kind: 'notice',
+          id: nextId(),
+          text: `telemetry: ${state?.enabled ? 'enabled' : 'disabled'}`,
+        });
+        return;
+      }
+      push({
+        kind: 'notice',
+        id: nextId(),
+        text: 'usage: /telemetry <enable|disable|status|reset>',
+        color: theme.warning,
+      });
+    },
+    [push],
+  );
+
   const finishPoolSetup = useCallback(
     (result: { connected: number }) => {
       setConnectingPool(false);
@@ -1056,6 +1102,7 @@ export function App({
     plan: (argument) => void plan(argument),
     skills: () => push({ kind: 'notice', id: nextId(), text: describeExtensions(session) }),
     pool: (argument) => void managePool(argument),
+    telemetry: (argument) => void manageTelemetry(argument),
   };
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
